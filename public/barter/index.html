@@ -56,7 +56,7 @@
   <p class="banner" id="banner" hidden>Practice call. No coins move.</p>
   <section class="card">
     <h2 class="gold">Time to the call</h2>
-    <p class="muted">8:00 PM ET</p>
+    <p class="muted" id="when">—</p>
     <p class="clock" id="clock">--:--:--</p>
   </section>
   <section class="card">
@@ -100,32 +100,19 @@ function etParts(instant) {
   return { year: bag.year, month: bag.month, day: bag.day, hour, minute: Number(bag.minute), second: Number(bag.second) };
 }
 
-function utcFromEt(year, month, day, hour, minute, second) {
-  let utc = Date.UTC(year, month - 1, day, hour, minute, second);
-  for (let i = 0; i < 4; i += 1) {
-    const got = etParts(new Date(utc));
-    const gotMs = Date.UTC(Number(got.year), Number(got.month) - 1, Number(got.day), got.hour, got.minute, got.second);
-    const want = Date.UTC(year, month - 1, day, hour, minute, second);
-    if (gotMs === want) return utc;
-    utc += want - gotMs;
-  }
-  return utc;
+function nextCallAt(now) {
+  const date = now instanceof Date ? now : new Date(now);
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  if (date.getTime() <= start) return start;
+  return start + 24 * 60 * 60 * 1000;
 }
 
-function nextCallAt(now) {
-  const parts = etParts(now);
-  let year = Number(parts.year);
-  let month = Number(parts.month);
-  let day = Number(parts.day);
-  const passed = parts.hour > 20 || (parts.hour === 20 && (parts.minute > 0 || parts.second > 0));
-  if (passed) {
-    const noon = utcFromEt(year, month, day, 12, 0, 0);
-    const later = etParts(new Date(noon + 36 * 60 * 60 * 1000));
-    year = Number(later.year);
-    month = Number(later.month);
-    day = Number(later.day);
-  }
-  return utcFromEt(year, month, day, 20, 0, 0);
+function callClockLabel(ms) {
+  const parts = etParts(new Date(ms));
+  const suffix = parts.hour >= 12 ? "PM" : "AM";
+  let hour = parts.hour % 12;
+  if (hour === 0) hour = 12;
+  return hour + ":" + pad(parts.minute) + " " + suffix + " ET";
 }
 
 function pad(n) { return String(n).padStart(2, "0"); }
@@ -136,7 +123,9 @@ function wholeSeconds(ms) {
 }
 
 function paintClock() {
-  const total = wholeSeconds(nextCallAt(new Date()) - Date.now());
+  const close = nextCallAt(new Date());
+  document.getElementById("when").textContent = callClockLabel(close);
+  const total = wholeSeconds(close - Date.now());
   const h = Math.trunc(total / 3600);
   const m = Math.trunc((total % 3600) / 60);
   const s = total % 60;

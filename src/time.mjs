@@ -53,33 +53,20 @@ export function confirmOpen(instant) {
   return inEtSpan(instant, CONFIRM_OPEN, CONFIRM_CLOSE);
 }
 
-function utcFromEt(year, month, day, hour, minute, second) {
-  let utc = Date.UTC(year, month - 1, day, hour, minute, second);
-  for (let i = 0; i < 4; i += 1) {
-    const got = etParts(new Date(utc));
-    if (!got) return null;
-    const gotMs = Date.UTC(Number(got.year), Number(got.month) - 1, Number(got.day), got.hour, got.minute, got.second);
-    const want = Date.UTC(year, month - 1, day, hour, minute, second);
-    if (gotMs === want) return new Date(utc);
-    utc += want - gotMs;
-  }
-  return new Date(utc);
+export function nextCallAt(instant) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return null;
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  if (date.getTime() <= start) return new Date(start);
+  return new Date(start + 24 * 60 * 60 * 1000);
 }
 
-export function nextCallAt(instant) {
+export function callClockLabel(instant) {
   const parts = etParts(instant);
-  if (!parts) return null;
-  let year = Number(parts.year);
-  let month = Number(parts.month);
-  let day = Number(parts.day);
-  const passed = parts.hour > 20 || (parts.hour === 20 && (parts.minute > 0 || parts.second > 0));
-  if (passed) {
-    const noon = utcFromEt(year, month, day, 12, 0, 0);
-    const later = etParts(new Date(noon.getTime() + 36 * 60 * 60 * 1000));
-    year = Number(later.year);
-    month = Number(later.month);
-    day = Number(later.day);
-  }
-  return utcFromEt(year, month, day, 20, 0, 0);
+  if (!parts) return "";
+  const suffix = parts.hour >= 12 ? "PM" : "AM";
+  let hour = parts.hour % 12;
+  if (hour === 0) hour = 12;
+  return `${hour}:${String(parts.minute).padStart(2, "0")} ${suffix} ET`;
 }
 

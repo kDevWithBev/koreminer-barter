@@ -7,7 +7,7 @@ import { nightCounts, eligibility } from "../src/eligibility.mjs";
 import { runCall } from "../src/engine.mjs";
 import { HOUSE, assertHouse, quote } from "../src/house.mjs";
 import { BARTER_LIVE } from "../src/live.mjs";
-import { confirmOpen, intentOpen, nextCallAt } from "../src/time.mjs";
+import { confirmOpen, intentOpen, nextCallAt, callClockLabel } from "../src/time.mjs";
 import { truncateWallet } from "../src/publish.mjs";
 import { houseLine } from "../src/page.mjs";
 
@@ -440,9 +440,22 @@ test("the house line says it is buying only when it holds no KORE", () => {
   assert.equal(/floor|yield|\bapr\b|dividend|passive income|guaranteed|more rewards coming/i.test(page), false);
 });
 
-test("the call countdown is 8:00 PM ET on both sides of the clock change", () => {
-  assert.equal(nextCallAt("2026-10-16T21:49:00.000Z").toISOString(), "2026-10-17T00:00:00.000Z");
-  assert.equal(nextCallAt("2026-11-02T00:00:00.000Z").toISOString(), "2026-11-02T01:00:00.000Z");
+test("the call targets midnight UTC across the November change", () => {
+  const tonight = nextCallAt("2026-10-16T21:49:00.000Z");
+  assert.equal(tonight.toISOString(), "2026-10-17T00:00:00.000Z");
+  assert.equal(callClockLabel(tonight), "8:00 PM ET");
+
+  const stillDaylight = nextCallAt("2026-10-31T22:00:00.000Z");
+  assert.equal(stillDaylight.toISOString(), "2026-11-01T00:00:00.000Z");
+  assert.equal(callClockLabel(stillDaylight), "8:00 PM ET");
+
+  const afterChange = nextCallAt("2026-11-01T12:00:00.000Z");
+  assert.equal(afterChange.toISOString(), "2026-11-02T00:00:00.000Z");
+  assert.equal(callClockLabel(afterChange), "7:00 PM ET");
+
+  const page = readFileSync(join(ROOT, "public/barter/index.html"), "utf8");
+  assert.equal(page.includes("hour > 20"), false);
+  assert.equal(page.includes("Date.UTC"), true);
 });
 
 test("clearing price helper ignores a skipper", () => {
