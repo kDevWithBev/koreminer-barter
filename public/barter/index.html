@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#12100e" />
+  <title>KOREMINER | The call</title>
+  <link rel="icon" href="/icon-192.png" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Silkscreen&display=swap" />
+  <style>
+    :root { --bg:#12100e; --surface:#1c1916; --inset:#141210; --fg:#f3ead7; --muted:#b4a894; --gold:#e2b34a; --ink:#1a140c; --line:#3a342c; }
+    * { box-sizing:border-box; }
+    html { -webkit-text-size-adjust:100%; }
+    body { margin:0; background:var(--bg); color:var(--fg); font-family:Outfit,sans-serif; overflow-x:hidden; }
+    main { max-width:40rem; margin:0 auto; padding:calc(1.25rem + env(safe-area-inset-top)) 1rem calc(2.5rem + env(safe-area-inset-bottom)); }
+    .kicker, h2 { font-family:Silkscreen,monospace; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { font-family:Silkscreen,monospace; font-size:clamp(1.7rem,8vw,2.6rem); margin:.4rem 0 0; line-height:1.15; }
+    h2 { margin:0 0 .75rem; font-size:.95rem; }
+    a { color:var(--gold); }
+    .nav-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:1rem; }
+    nav { display:flex; flex-wrap:wrap; gap:.5rem; }
+    .tab { display:inline-flex; align-items:center; justify-content:center; height:44px; padding:0 16px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-weight:600; font-size:15px; text-decoration:none; }
+    .tab.on { background:var(--gold); color:var(--ink); border-color:var(--gold); }
+    .banner, .card, .note { border:1px solid var(--line); border-radius:.9rem; }
+    .banner { margin-top:1rem; background:#2a2214; border-color:var(--gold); color:var(--gold); padding:.9rem 1rem; font-weight:700; }
+    .card { margin-top:1rem; background:var(--surface); padding:1.1rem 1rem; min-width:0; }
+    .muted { color:var(--muted); }
+    .gold { color:var(--gold); }
+    .clock { font-family:Silkscreen,monospace; font-size:clamp(1.8rem,8vw,2.6rem); letter-spacing:.06em; margin:.2rem 0; line-height:1.2; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; margin-top:.4rem; }
+    .stats div { background:var(--inset); border-radius:.8rem; padding:.75rem .7rem; min-width:0; }
+    .stats span { color:var(--muted); font-size:.8rem; }
+    .stats b { display:block; margin-top:.2rem; font-size:1.05rem; overflow-wrap:anywhere; }
+    .fill { list-style:none; margin:.2rem 0 0; padding:0; }
+    .fill li { background:var(--inset); border-radius:.8rem; padding:.75rem .7rem; margin-top:.5rem; min-width:0; }
+    .fill b { display:block; font-weight:600; }
+    .fill span { display:block; color:var(--muted); font-size:.9rem; margin-top:.15rem; }
+    .note { margin-top:1rem; background:var(--inset); padding:1rem; line-height:1.55; }
+    p { line-height:1.55; overflow-wrap:anywhere; }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="kicker gold">The call</p>
+    <h1>KOREMINER</h1>
+    <div class="nav-row">
+      <nav>
+        <a class="tab" href="/">The Shaft</a>
+        <a class="tab" href="/lore/">Lore</a>
+        <a class="tab on" href="/barter/" aria-current="page">Barter</a>
+      </nav>
+    </div>
+  </header>
+  <p class="banner" id="banner" hidden>Practice call. No coins move.</p>
+  <section class="card">
+    <h2 class="gold">Time to the call</h2>
+    <p class="muted">8:00 PM ET</p>
+    <p class="clock" id="clock">--:--:--</p>
+  </section>
+  <section class="card">
+    <h2 class="gold">Tonight's call</h2>
+    <div class="stats" id="stats">
+      <div><span>Night</span><b id="night">—</b></div>
+      <div><span>Status</span><b id="status">—</b></div>
+      <div><span>Clearing price</span><b id="price">—</b></div>
+      <div><span>KORE matched</span><b id="kore">—</b></div>
+      <div><span>KTA matched</span><b id="kta">—</b></div>
+      <div><span>Fills</span><b id="fills">—</b></div>
+    </div>
+    <p id="house" class="muted"></p>
+  </section>
+  <section class="card">
+    <h2 class="gold">Fills</h2>
+    <ul class="fill" id="rows"></ul>
+    <p class="muted" id="empty" hidden>No fills on this call.</p>
+  </section>
+  <p class="note">Trade at the call with Pockets or a sign link from your own wallet.</p>
+</main>
+<script>
+function houseLine(call) {
+  const held = "House holds " + call.houseKta + " KTA and " + call.houseKore + " KORE.";
+  if (call.houseKore === 0) return held + " House is buying only tonight.";
+  return held;
+}
+
+function etParts(instant) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+  });
+  const bag = {};
+  for (const part of fmt.formatToParts(instant)) {
+    if (part.type !== "literal") bag[part.type] = part.value;
+  }
+  let hour = Number(bag.hour);
+  if (hour === 24) hour = 0;
+  return { year: bag.year, month: bag.month, day: bag.day, hour, minute: Number(bag.minute), second: Number(bag.second) };
+}
+
+function utcFromEt(year, month, day, hour, minute, second) {
+  let utc = Date.UTC(year, month - 1, day, hour, minute, second);
+  for (let i = 0; i < 4; i += 1) {
+    const got = etParts(new Date(utc));
+    const gotMs = Date.UTC(Number(got.year), Number(got.month) - 1, Number(got.day), got.hour, got.minute, got.second);
+    const want = Date.UTC(year, month - 1, day, hour, minute, second);
+    if (gotMs === want) return utc;
+    utc += want - gotMs;
+  }
+  return utc;
+}
+
+function nextCallAt(now) {
+  const parts = etParts(now);
+  let year = Number(parts.year);
+  let month = Number(parts.month);
+  let day = Number(parts.day);
+  const passed = parts.hour > 20 || (parts.hour === 20 && (parts.minute > 0 || parts.second > 0));
+  if (passed) {
+    const noon = utcFromEt(year, month, day, 12, 0, 0);
+    const later = etParts(new Date(noon + 36 * 60 * 60 * 1000));
+    year = Number(later.year);
+    month = Number(later.month);
+    day = Number(later.day);
+  }
+  return utcFromEt(year, month, day, 20, 0, 0);
+}
+
+function pad(n) { return String(n).padStart(2, "0"); }
+
+function wholeSeconds(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.trunc(ms / 1000);
+}
+
+function paintClock() {
+  const total = wholeSeconds(nextCallAt(new Date()) - Date.now());
+  const h = Math.trunc(total / 3600);
+  const m = Math.trunc((total % 3600) / 60);
+  const s = total % 60;
+  document.getElementById("clock").textContent = pad(h) + ":" + pad(m) + ":" + pad(s);
+}
+
+function paint(call) {
+  document.getElementById("banner").hidden = call.mode !== "dry_run";
+  document.getElementById("night").textContent = call.night;
+  document.getElementById("status").textContent = call.status;
+  document.getElementById("price").textContent = call.clearingPrice == null ? "No clear" : call.clearingPrice + " KTA per KORE";
+  document.getElementById("kore").textContent = String(call.koreMatched);
+  document.getElementById("kta").textContent = String(call.ktaMatched);
+  document.getElementById("fills").textContent = String(call.fillCount);
+  document.getElementById("house").textContent = houseLine(call);
+  const rows = document.getElementById("rows");
+  rows.replaceChildren();
+  const fills = Array.isArray(call.fills) ? call.fills : [];
+  document.getElementById("empty").hidden = fills.length > 0;
+  for (const fill of fills) {
+    const li = document.createElement("li");
+    const wallet = document.createElement("b");
+    wallet.textContent = String(fill.wallet);
+    const trade = document.createElement("span");
+    trade.textContent = fill.side + " · " + fill.amount + " KORE";
+    const fee = document.createElement("span");
+    fee.textContent = "Fee " + fill.fee + " KTA · " + (fill.confirmed ? "confirmed" : "not confirmed");
+    li.append(wallet, trade, fee);
+    rows.append(li);
+  }
+}
+
+paintClock();
+setInterval(paintClock, 1000);
+fetch("call-latest.json")
+  .then((response) => response.json())
+  .then(paint)
+  .catch(() => {
+    document.getElementById("status").textContent = "The call file is not here yet.";
+  });
+</script>
+</body>
+</html>

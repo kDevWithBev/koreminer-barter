@@ -7,7 +7,9 @@ import { nightCounts, eligibility } from "../src/eligibility.mjs";
 import { runCall } from "../src/engine.mjs";
 import { HOUSE, assertHouse, quote } from "../src/house.mjs";
 import { BARTER_LIVE } from "../src/live.mjs";
-import { confirmOpen, intentOpen } from "../src/time.mjs";
+import { confirmOpen, intentOpen, nextCallAt } from "../src/time.mjs";
+import { truncateWallet } from "../src/publish.mjs";
+import { houseLine } from "../src/page.mjs";
 
 const OPEN = "2026-10-17T00:30:00.000Z";
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -412,6 +414,35 @@ test("KORE moves in whole coins and the fee stays in KTA", () => {
   assert.equal(bought.fee, 0.01);
   assert.equal(Number.isInteger(bought.amount), true);
   assert.ok(partial.publicCall.fills.every((fill) => Number.isInteger(fill.amount)));
+});
+
+test("a wallet shows ten characters, then four", () => {
+  const full = "keeta_aabd7qpxd6li6qwkyr4qjlzao7fu6wadr6pwhekxmem2iqtsb27wn5yphdqyv5y";
+  const shown = truncateWallet(full);
+  const [lead, tail] = shown.split("…");
+  assert.equal(shown, "keeta_aabd…yv5y");
+  assert.equal(lead.length, 10);
+  assert.equal(tail.length, 4);
+  assert.equal(shown.includes(full.slice(10, -4)), false);
+});
+
+test("the house line says it is buying only when it holds no KORE", () => {
+  const buying = houseLine({ houseKta: 100.000054, houseKore: 0 });
+  assert.equal(buying, "House holds 100.000054 KTA and 0 KORE. House is buying only tonight.");
+  const both = houseLine({ houseKta: 10, houseKore: 4 });
+  assert.equal(both, "House holds 10 KTA and 4 KORE.");
+  assert.equal(both.includes("buying only"), false);
+  const page = readFileSync(join(ROOT, "public/barter/index.html"), "utf8");
+  assert.equal(page.includes("House is buying only tonight."), true);
+  assert.equal(page.includes("Practice call. No coins move."), true);
+  assert.equal(/<form/i.test(page), false);
+  assert.equal(/\bBase\b/.test(page), false);
+  assert.equal(/floor|yield|\bapr\b|dividend|passive income|guaranteed|more rewards coming/i.test(page), false);
+});
+
+test("the call countdown is 8:00 PM ET on both sides of the clock change", () => {
+  assert.equal(nextCallAt("2026-10-16T21:49:00.000Z").toISOString(), "2026-10-17T00:00:00.000Z");
+  assert.equal(nextCallAt("2026-11-02T00:00:00.000Z").toISOString(), "2026-11-02T01:00:00.000Z");
 });
 
 test("clearing price helper ignores a skipper", () => {
