@@ -80,6 +80,7 @@ export function streaksFromHistory({ seedStreak = 0, nights = [] } = {}) {
   let previous = start;
   for (const night of nights) {
     const streak = Number(night?.streak) || 0;
+    if (streak === previous && streak > 0) continue;
     flags.push(streak > previous);
     previous = streak;
   }
@@ -174,26 +175,32 @@ export function buildPublicLadder({ miners, history = null, buys = [], revoked =
       seedStreak: prior ? prior.seedStreak : miningStreak,
       nights: prior?.nights ?? [],
     });
+    const aligned = computed.shieldsUsed === 0 ? rankFor(miningStreak) : null;
+    const ladderStreak = aligned ? miningStreak : computed.ladderStreak;
+    const rank = aligned ? aligned.rank : computed.rank;
+    const nextRank = aligned ? aligned.nextRank : computed.nextRank;
+    const nextAt = aligned ? aligned.nextAt : computed.nextAt;
+    const weight = aligned ? miningStreak : computed.weight;
     const buyer = noteBuyer(mining, []);
     if (mining.streak !== miningStreak || buyer.streak !== miningStreak || buyer.weight !== miningStreak) {
       throw new Error("mining streak changed");
     }
     const status = bartererStatus({
-      streak: computed.ladderStreak,
+      streak: ladderStreak,
       region: regions[wallet],
       revoked: revoked.includes(wallet),
     });
     return {
       wallet: truncateWallet(wallet),
       miningStreak,
-      streak: computed.ladderStreak,
-      ladderStreak: computed.ladderStreak,
-      rank: computed.rank,
-      nextRank: computed.nextRank,
-      nextAt: computed.nextAt,
+      streak: ladderStreak,
+      ladderStreak,
+      rank,
+      nextRank,
+      nextAt,
       shields: computed.shields,
       shieldsUsed: computed.shieldsUsed,
-      weight: computed.weight,
+      weight,
       buyerNights: nights[wallet] ?? 0,
       buyerRank: place.get(wallet) ?? null,
       message: status.message,

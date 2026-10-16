@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -19,6 +19,7 @@ import {
   transferToken,
 } from "../src/ladder.mjs";
 import { ensureHistory, loadWalletHistory } from "../src/history.mjs";
+import { readPlayer } from "../src/card.mjs";
 import { houseLine, streakLines } from "../src/page.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -288,5 +289,59 @@ test("the dry run appends history from the lookup and leaves that file alone", (
   const lines = streakLines(ladder.wallets[0]);
   assert.equal(lines.mining.startsWith("Mining streak "), true);
   assert.equal(lines.ladder.startsWith("Ladder streak "), true);
+});
+
+test("a seed streak of 5 with no history yet is 9 days from Practice Shield", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kore-seed-"));
+  const wallet = "keeta_aabik63e6x7svkclg74scrqe373rhy5v4xtbp7lx7wcbkrdk2evpiqcl3cihd2i";
+  const lookup = {
+    miners: { [wallet]: { fuel: "977.00000", streak: 5, paid: "17992", waiting: "390" } },
+  };
+  const historyDir = join(dir, "history");
+  const seeded = ensureHistory({ dir: historyDir, night: "2026-10-16", lookup });
+  assert.equal(seeded.seeded, true);
+  assert.equal(existsSync(join(historyDir, "2026-10-16.json")), false);
+  const loaded = loadWalletHistory(historyDir);
+  assert.equal(loaded[wallet].seedStreak, 5);
+  assert.equal(loaded[wallet].nights.length, 0);
+  const got = streaksFromHistory(loaded[wallet]);
+  assert.equal(got.ladderStreak, 5);
+  assert.equal(got.miningStreak, 5);
+  assert.equal(got.shieldsUsed, 0);
+  assert.equal(got.nextRank, "Practice Shield");
+  assert.equal(got.nextAt - got.ladderStreak, 9);
+
+  const repeated = ensureHistory({ dir: historyDir, night: "2026-10-17", lookup });
+  assert.equal(repeated.appended, true);
+  const again = streaksFromHistory(loadWalletHistory(historyDir)[wallet]);
+  assert.equal(again.ladderStreak, 5);
+  assert.equal(again.shieldsUsed, 0);
+
+  const lookupPath = join(dir, "lookup.json");
+  writeFileSync(lookupPath, `${JSON.stringify(lookup)}\n`);
+  const publicDir = join(dir, "public");
+  const names = readdirSync(historyDir);
+  const run = spawnSync(process.execPath, [
+    join(ROOT, "bin/sim.mjs"),
+    "--ladder",
+    "--lookup", lookupPath,
+    "--history", historyDir,
+    "--public", publicDir,
+  ], { cwd: ROOT, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(readdirSync(historyDir).sort(), names.sort());
+  const ladder = JSON.parse(readFileSync(join(publicDir, "ladder.json"), "utf8"));
+  assert.equal(ladder.wallets[0].wallet, "keeta_aabi…hd2i");
+  assert.equal(ladder.wallets[0].miningStreak, 5);
+  assert.equal(ladder.wallets[0].ladderStreak, 5);
+  assert.equal(ladder.wallets[0].shieldsUsed, 0);
+  assert.equal(ladder.wallets[0].nextRank, "Practice Shield");
+  assert.equal(ladder.wallets[0].nextAt, 14);
+  const view = readPlayer({ wallet, lookup, ladder });
+  assert.equal(view.lines.fuel, "Fuel 977 KTA");
+  assert.equal(view.lines.ladder, "Ladder streak 5 (0 shields used)");
+  assert.equal(view.lines.next, "9 days to Practice Shield");
+  assert.equal(view.daysToNext, 9);
+  assert.equal(view.text.includes(wallet), false);
 });
 

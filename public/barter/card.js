@@ -166,7 +166,7 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
     ok: true,
     kind: row ? "known" : "no-ladder",
     show: shortWallet(entered),
-    fuel: String(miner.fuel ?? "0"),
+    fuel: `${withCommas(miner.fuel)} KTA`,
     miningStreak,
     ladderStreak,
     shieldsUsed: used,
@@ -178,7 +178,7 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
     buyerNights: row ? Number(row.buyerNights) || 0 : null,
     upgrades: upgradesLine(miner),
     lines: {
-      fuel: `Fuel ${String(miner.fuel ?? "0")} KTA`,
+      fuel: `Fuel ${withCommas(miner.fuel)} KTA`,
       mining: `Mining streak ${miningStreak}`,
       ladder: row ? `Ladder streak ${ladderStreak} (${usedText})` : NO_LADDER,
       rank: row ? `Rank ${row.rank || "No rank yet"}` : "Rank: no ladder record yet.",

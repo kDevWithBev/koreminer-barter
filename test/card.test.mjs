@@ -66,7 +66,7 @@ test("a known wallet shows the shift and never the full address", () => {
   const view = readPlayer({ wallet: known.toUpperCase(), lookup: board(), ladder: ranks() });
   assert.equal(view.kind, "known");
   assert.equal(view.show, shortWallet(known));
-  assert.equal(view.lines.fuel, "Fuel 12027.00000 KTA");
+  assert.equal(view.lines.fuel, "Fuel 12,027 KTA");
   assert.equal(view.lines.mining, "Mining streak 16");
   assert.equal(view.lines.ladder, "Ladder streak 16 (0 shields used)");
   assert.equal(view.lines.rank, "Rank Practice Shield");

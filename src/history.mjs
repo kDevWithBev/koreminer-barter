@@ -18,6 +18,32 @@ export function assertOutsideRunner(dir) {
   return resolved;
 }
 
+function walletStreak(row) {
+  const raw = row && typeof row === "object" ? (row.streak ?? row.miningStreak) : row;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.trunc(n);
+}
+
+function rowMap(value) {
+  if (Array.isArray(value)) {
+    const rows = {};
+    for (const row of value) {
+      if (row && typeof row === "object" && row.wallet) rows[row.wallet] = row;
+    }
+    return rows;
+  }
+  if (value && typeof value === "object") return value;
+  return null;
+}
+
+function seedRows(seed) {
+  const picked = [seed?.wallets, seed?.miners, seed?.lookup?.miners]
+    .map(rowMap)
+    .find((rows) => rows && Object.keys(rows).length);
+  return picked ?? {};
+}
+
 function writeJson(dir, name, body) {
   writeAtomic(dir, name, `${JSON.stringify(body, null, 2)}\n`);
 }
@@ -27,7 +53,7 @@ export function snapshotWallets(lookup) {
   for (const [wallet, row] of Object.entries(lookup?.miners ?? {})) {
     if (!wallet) continue;
     const fuel = typeof row?.fuel === "string" || typeof row?.fuel === "number" ? row.fuel : "0";
-    wallets[wallet] = { fuel, streak: Number(row?.streak) || 0 };
+    wallets[wallet] = { fuel, streak: walletStreak(row) };
   }
   return wallets;
 }
@@ -57,25 +83,33 @@ export function loadWalletHistory(dir) {
   if (!existsSync(seedPath)) return {};
   const seed = JSON.parse(readFileSync(seedPath, "utf8"));
   const wallets = {};
-  for (const [wallet, row] of Object.entries(seed.wallets ?? {})) {
-    wallets[wallet] = { seedStreak: Number(row.streak) || 0, nights: [] };
+  for (const [wallet, row] of Object.entries(seedRows(seed))) {
+    wallets[wallet] = { seedStreak: walletStreak(row), nights: [] };
   }
   const files = readdirSync(resolved).filter((name) => NIGHT_FILE.test(name)).sort();
   for (const name of files) {
     const night = JSON.parse(readFileSync(join(resolved, name), "utf8"));
-    const present = new Set(Object.keys(night.wallets ?? {}));
+    const rows = seedRows(night);
+    const present = new Set(Object.keys(rows));
+    const overlaps = Object.keys(wallets).some((wallet) => present.has(wallet));
+    if (!overlaps) {
+      for (const [wallet, row] of Object.entries(rows)) {
+        if (!wallets[wallet]) wallets[wallet] = { seedStreak: walletStreak(row), nights: [] };
+      }
+      continue;
+    }
     for (const wallet of Object.keys(wallets)) {
       if (!present.has(wallet)) wallets[wallet].nights.push({ night: night.night, fuel: "0", streak: 0 });
     }
-    for (const [wallet, row] of Object.entries(night.wallets ?? {})) {
+    for (const [wallet, row] of Object.entries(rows)) {
       if (!wallets[wallet]) {
-        wallets[wallet] = { seedStreak: Number(row.streak) || 0, nights: [] };
+        wallets[wallet] = { seedStreak: walletStreak(row), nights: [] };
         continue;
       }
       wallets[wallet].nights.push({
         night: night.night,
-        fuel: row.fuel ?? "0",
-        streak: Number(row.streak) || 0,
+        fuel: row?.fuel ?? "0",
+        streak: walletStreak(row),
       });
     }
   }

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { assertOutsideRunner } from "../src/history.mjs";
+import { writeAtomic } from "../src/atomic.mjs";
+import { assertOutsideRunner, loadWalletHistory } from "../src/history.mjs";
+import { buildPublicLadder } from "../src/ladder.mjs";
 import { publishNight, runNightly } from "../src/nightly.mjs";
 
 function arg(name) {
@@ -16,6 +18,23 @@ function readJson(path) {
 }
 
 function main() {
+  if (process.argv.includes("--ladder")) {
+    const lookupPath = arg("--lookup");
+    if (!lookupPath) throw new Error("missing --lookup");
+    const lookupFile = resolve(lookupPath);
+    if (lookupFile === "/opt/koreminer" || lookupFile.startsWith("/opt/koreminer/")) {
+      throw new Error("lookup path refused");
+    }
+    const historyDir = assertOutsideRunner(arg("--history") ?? resolve("data/history"));
+    const publicDir = assertOutsideRunner(arg("--public") ?? resolve("public/barter"));
+    const lookup = readJson(lookupPath);
+    const history = loadWalletHistory(historyDir);
+    const ladder = buildPublicLadder({ miners: lookup.miners ?? {}, history });
+    writeAtomic(publicDir, "ladder.json", `${JSON.stringify(ladder, null, 2)}\n`);
+    process.stdout.write(`${publicDir}/ladder.json\n`);
+    return;
+  }
+
   if (process.argv.includes("--nightly")) {
     const lookupPath = arg("--lookup");
     const historyArg = arg("--history");
