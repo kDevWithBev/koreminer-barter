@@ -21,7 +21,9 @@ function afford(kta, price, rate) {
 export function clearingPrice({ sells, buys, quoted, cfg, barterers }) {
   const settersS = sells.filter((order) => !order.half);
   const settersB = buys.filter((order) => !order.half);
-  const prices = new Set([quoted.center]);
+  const anchor = Number.isFinite(quoted.reference) ? quoted.reference : null;
+  const prices = new Set();
+  if (anchor != null) prices.add(anchor);
   for (const order of [...settersS, ...settersB]) {
     if (Number.isFinite(order.limit)) prices.add(order.limit);
   }
@@ -32,13 +34,12 @@ export function clearingPrice({ sells, buys, quoted, cfg, barterers }) {
     for (const order of settersS) if (order.limit <= price + 1e-12) supply += order.qty;
     let demand = 0;
     for (const order of settersB) {
-      const limit = order.limit == null ? quoted.ask : order.limit;
-      if (limit + 1e-12 < price) continue;
+      if (!Number.isFinite(order.limit) || order.limit + 1e-12 < price) continue;
       demand += Math.min(order.qty, afford(order.kta, price, feeRate(order.wallet, cfg, barterers)));
     }
     const matched = Math.min(supply, demand);
     if (!(matched > 1e-12)) continue;
-    const distance = Math.abs(price - quoted.center);
+    const distance = anchor == null ? 0 : Math.abs(price - anchor);
     if (
       !best ||
       matched > best.matched + 1e-12 ||
@@ -109,20 +110,23 @@ function houseTake(side, qty, price, quoted, house, cfg, spent) {
   const room = cfg.nightCapKta - spent;
   if (!(room > 1e-12)) return 0;
   if (side === "buy") {
-    if (!quoted.mayBuy) return 0;
+    if (!quoted.mayBuy || !(quoted.bid > 0)) return 0;
     if (price > quoted.bid + 1e-12) return 0;
     const cash = Math.min(room, house.kta, cfg.potKta);
     return Math.min(qty, cash / price);
   }
+  if (!quoted.maySell || !(quoted.ask > 0) || !(house.kore > 0)) return 0;
   if (price + 1e-12 < quoted.ask) return 0;
   return Math.min(qty, house.kore, room / price);
 }
 
 export function clearNight({ sells, buys, quoted, cfg, house, confirms, barterers }) {
-  const withBuyLimits = buys.map((order) => ({
-    ...order,
-    limit: order.limit == null ? quoted.ask : order.limit,
-  }));
+  const withBuyLimits = [];
+  for (const order of buys) {
+    const limit = Number.isFinite(order.limit) ? order.limit : quoted.reference;
+    if (!Number.isFinite(limit)) continue;
+    withBuyLimits.push({ ...order, limit });
+  }
   const price = clearingPrice({ sells, buys: withBuyLimits, quoted, cfg, barterers });
   const skips = [];
   if (confirms) {

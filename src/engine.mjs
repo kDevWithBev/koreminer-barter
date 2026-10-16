@@ -1,6 +1,6 @@
 import { eligibility } from "./eligibility.mjs";
 import { clearNight } from "./clear.mjs";
-import { HOUSE, FEE_SHARE, assertHouse, quote } from "./house.mjs";
+import { HOUSE, FEE_SHARE, assertHouse, quote, referencePrice } from "./house.mjs";
 import { prepareOrders } from "./intents.mjs";
 import { BARTER_LIVE } from "./live.mjs";
 import { toPublic } from "./publish.mjs";
@@ -15,8 +15,8 @@ export function runCall(input) {
   assertHouse(cfg);
   const prepared = prepareOrders(input);
   const state = { kta: input.house.kta, kore: input.house.kore };
-  const mid = input.house.mid ?? prepared.medianCost;
-  const quoted = quote(cfg, state, mid);
+  const reference = referencePrice(input.lastClear, prepared.medianCost);
+  const quoted = quote(cfg, state, reference);
   const cleared = clearNight({
     sells: prepared.sells,
     buys: prepared.buys,

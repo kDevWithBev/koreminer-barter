@@ -2,29 +2,29 @@
   "mode": "dry_run",
   "night": "2026-10-16",
   "status": "clear",
-  "clearingPrice": 1.1,
+  "clearingPrice": 0.0027,
   "koreMatched": 2,
-  "ktaMatched": 2.2,
+  "ktaMatched": 0.0054,
   "fillCount": 2,
   "houseBuyKore": 0,
   "houseSellKore": 0,
-  "houseKta": 100.022,
+  "houseKta": 100.000054,
   "houseKore": 0,
   "houseKorePct": 0,
-  "feesToHouse": 0.022,
+  "feesToHouse": 0.000054,
   "fills": [
     {
       "wallet": "keeta_aabd…yv5y",
       "side": "sell",
       "amount": 2,
-      "fee": 0.011,
+      "fee": 0.000027,
       "confirmed": true
     },
     {
       "wallet": "keeta_aabz…bbvy",
       "side": "buy",
       "amount": 2,
-      "fee": 0.011,
+      "fee": 0.000027,
       "confirmed": true
     }
   ]

@@ -324,6 +324,64 @@ test("no source file reads an environment or a signing module", () => {
   assert.equal(/keetanet|seed\.txt|signTransaction|privateKey/i.test(text), false);
 });
 
+test("an empty house uses the cost series and never sells KORE it does not hold", () => {
+  const cost = [0.0027, 0.0027, 0.0027, 0.0027, 0.0027, 0.0027, 0.0027];
+  const result = runCall(
+    night({
+      costToMine: cost,
+      house: { kta: 100, kore: 0, mid: 1 },
+      balances: { seller: { kore: 10, kta: 0 }, buyer: { kore: 0, kta: 10 } },
+      intents: [sell("seller", 10), buy("buyer", 20, 0.01)],
+    }),
+  );
+  assert.ok(result.publicCall.clearingPrice < 1);
+  assert.ok(Math.abs(result.publicCall.clearingPrice - 0.0027) < 1e-8);
+  assert.equal(result.server.quote.ask, null);
+  assert.ok(result.server.quote.bid > 0);
+  assert.equal(result.publicCall.houseSellKore, 0);
+
+  const ranked = runCall(
+    night({
+      lastClear: 0.004,
+      costToMine: cost,
+      house: { kta: 100, kore: 0 },
+      balances: { seller: { kore: 2, kta: 0 }, buyer: { kore: 0, kta: 5 } },
+      intents: [sell("seller", 2), buy("buyer", 2, 0.01)],
+    }),
+  );
+  assert.ok(Math.abs(ranked.publicCall.clearingPrice - 0.004) < 1e-8);
+  assert.equal(ranked.publicCall.houseSellKore, 0);
+});
+
+test("no reference and no crossing orders does not clear", () => {
+  const missed = runCall(
+    night({
+      costToMine: [],
+      house: { kta: 100, kore: 0, mid: 1 },
+      balances: { seller: { kore: 10, kta: 0 }, buyer: { kore: 0, kta: 10 } },
+      intents: [sell("seller", 10, 2), buy("buyer", 10, 1)],
+    }),
+  );
+  assert.equal(missed.publicCall.status, "no_clear");
+  assert.equal(missed.publicCall.clearingPrice, null);
+  assert.equal(missed.server.quote.quoted, false);
+  assert.equal(missed.publicCall.houseBuyKore, 0);
+  assert.equal(missed.publicCall.houseSellKore, 0);
+
+  const miners = runCall(
+    night({
+      costToMine: [],
+      house: { kta: 100, kore: 0, mid: 1 },
+      balances: { seller: { kore: 4, kta: 0 }, buyer: { kore: 0, kta: 10 } },
+      intents: [sell("seller", 4, 0.002), buy("buyer", 8, 0.003)],
+    }),
+  );
+  assert.equal(miners.publicCall.status, "clear");
+  assert.ok(miners.publicCall.clearingPrice < 1);
+  assert.equal(miners.publicCall.houseBuyKore, 0);
+  assert.equal(miners.publicCall.houseSellKore, 0);
+});
+
 test("clearing price helper ignores a skipper", () => {
   const price = clearingPrice({
     sells: [{ wallet: "s", qty: 10, limit: 1, half: false }],
@@ -331,7 +389,7 @@ test("clearing price helper ignores a skipper", () => {
       { wallet: "b", qty: 10, limit: 1.2, kta: 100, half: false },
       { wallet: "k", qty: 10, limit: 5, kta: 100, half: true },
     ],
-    quoted: { center: 1, ask: 1.015, bid: 0.985 },
+    quoted: { center: 1.1, reference: 1, ask: 1.015, bid: 0.985 },
     cfg: HOUSE,
     barterers: new Set(),
   });

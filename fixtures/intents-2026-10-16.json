@@ -1,18 +1,17 @@
 {
   "night": "2026-10-16",
   "costToMine": [
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1
+    0.0027,
+    0.0027,
+    0.0027,
+    0.0027,
+    0.0027,
+    0.0027,
+    0.0027
   ],
   "house": {
     "kta": 100,
-    "kore": 0,
-    "mid": 1
+    "kore": 0
   },
   "balances": {
     "keeta_aabd7qpxd6li6qwkyr4qjlzao7fu6wadr6pwhekxmem2iqtsb27wn5yphdqyv5y": {
