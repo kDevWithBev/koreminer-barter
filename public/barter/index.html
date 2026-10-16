@@ -76,10 +76,22 @@
     <ul class="fill" id="rows"></ul>
     <p class="muted" id="empty" hidden>No fills on this call.</p>
   </section>
+  <section class="card">
+    <h2 class="gold">The ladder</h2>
+    <div class="stats" id="rungs"></div>
+    <ul class="fill" id="ladder"></ul>
+    <p class="muted">Barterers trade cheaper at the call. Perks may change.</p>
+  </section>
+  <section class="card">
+    <h2 class="gold">Buyers</h2>
+    <ul class="fill" id="buyers"></ul>
+    <p class="muted" id="buyers-empty" hidden>No buyer nights yet.</p>
+  </section>
   <p class="note">Trade at the call with Pockets or a sign link from your own wallet.</p>
 </main>
 <script>
 function houseLine(call) {
+  if (call.mode === "dry_run") return call.houseKore === 0 ? "House is buying only tonight." : "";
   const held = "House holds " + call.houseKta + " KTA and " + call.houseKore + " KORE.";
   if (call.houseKore === 0) return held + " House is buying only tonight.";
   return held;
@@ -141,6 +153,7 @@ function paint(call) {
   document.getElementById("kta").textContent = String(call.ktaMatched);
   document.getElementById("fills").textContent = String(call.fillCount);
   document.getElementById("house").textContent = houseLine(call);
+  document.getElementById("house").hidden = houseLine(call) === "";
   const rows = document.getElementById("rows");
   rows.replaceChildren();
   const fills = Array.isArray(call.fills) ? call.fills : [];
@@ -158,6 +171,46 @@ function paint(call) {
   }
 }
 
+function paintLadder(ladder) {
+  const rungs = document.getElementById("rungs");
+  rungs.replaceChildren();
+  for (const [name, count] of Object.entries(ladder.rungs || {})) {
+    const box = document.createElement("div");
+    const label = document.createElement("span");
+    label.textContent = name;
+    const value = document.createElement("b");
+    value.textContent = String(count);
+    box.append(label, value);
+    rungs.append(box);
+  }
+  const list = document.getElementById("ladder");
+  list.replaceChildren();
+  for (const row of ladder.wallets || []) {
+    const li = document.createElement("li");
+    const wallet = document.createElement("b");
+    wallet.textContent = String(row.wallet);
+    const rank = document.createElement("span");
+    rank.textContent = (row.rank || "No rank yet") + " · streak " + row.streak + (row.nextRank ? " · next " + row.nextRank : "");
+    const extra = document.createElement("span");
+    extra.textContent = "Buyer nights " + row.buyerNights + (row.message ? " · " + row.message : "");
+    li.append(wallet, rank, extra);
+    list.append(li);
+  }
+  const buyers = document.getElementById("buyers");
+  buyers.replaceChildren();
+  const board = ladder.buyers || [];
+  document.getElementById("buyers-empty").hidden = board.length > 0;
+  for (const row of board) {
+    const li = document.createElement("li");
+    const wallet = document.createElement("b");
+    wallet.textContent = row.buyerRank + ". " + row.wallet;
+    const nights = document.createElement("span");
+    nights.textContent = row.buyerNights + " buyer nights";
+    li.append(wallet, nights);
+    buyers.append(li);
+  }
+}
+
 paintClock();
 setInterval(paintClock, 1000);
 fetch("call-latest.json")
@@ -165,6 +218,12 @@ fetch("call-latest.json")
   .then(paint)
   .catch(() => {
     document.getElementById("status").textContent = "The call file is not here yet.";
+  });
+fetch("ladder.json")
+  .then((response) => response.json())
+  .then(paintLadder)
+  .catch(() => {
+    document.getElementById("buyers-empty").hidden = false;
   });
 </script>
 </body>

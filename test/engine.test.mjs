@@ -427,9 +427,10 @@ test("a wallet shows ten characters, then four", () => {
 });
 
 test("the house line says it is buying only when it holds no KORE", () => {
-  const buying = houseLine({ houseKta: 100.000054, houseKore: 0 });
-  assert.equal(buying, "House holds 100.000054 KTA and 0 KORE. House is buying only tonight.");
-  const both = houseLine({ houseKta: 10, houseKore: 4 });
+  const buying = houseLine({ mode: "dry_run", houseKta: 100.000054, houseKore: 0 });
+  assert.equal(buying, "House is buying only tonight.");
+  assert.equal(buying.includes("100.000054"), false);
+  const both = houseLine({ houseKta: 10, houseKore: 4 }, true);
   assert.equal(both, "House holds 10 KTA and 4 KORE.");
   assert.equal(both.includes("buying only"), false);
   const page = readFileSync(join(ROOT, "public/barter/index.html"), "utf8");

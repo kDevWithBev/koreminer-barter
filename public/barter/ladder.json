@@ -1,0 +1,356 @@
+{
+  "mode": "dry_run",
+  "rungs": {
+    "Practice Shield": 0,
+    "Shift Boss Shield": 0,
+    "Narrator Book": 0,
+    "Barterer": 0
+  },
+  "wallets": [
+    {
+      "wallet": "keeta_aabi…hd2i",
+      "streak": 5,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabz…bbvy",
+      "streak": 5,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aab3…vdmi",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aaba…g4yq",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aaba…kgoy",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabb…2fwi",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabd…svca",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabd…yv5y",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabe…76fq",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabf…dway",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabi…erki",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabj…lu4y",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabr…akja",
+      "streak": 3,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aab6…ocuq",
+      "streak": 2,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabj…4ddi",
+      "streak": 2,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aabs…ww7a",
+      "streak": 2,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    },
+    {
+      "wallet": "keeta_aab2…fvvi",
+      "streak": 0,
+      "rank": null,
+      "nextRank": "Practice Shield",
+      "nextAt": 14,
+      "shields": {
+        "practice": {
+          "held": false,
+          "used": false
+        },
+        "shiftBoss": {
+          "held": false,
+          "used": false
+        }
+      },
+      "buyerNights": 0,
+      "buyerRank": null,
+      "message": ""
+    }
+  ],
+  "buyers": [],
+  "copy": [
+    "Barterers trade cheaper at the call.",
+    "Perks may change."
+  ]
+}
