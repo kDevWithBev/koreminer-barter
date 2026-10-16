@@ -5,14 +5,14 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { writeAtomic } from "../src/atomic.mjs";
-import { LOOKUP_MAX_AGE_MS, lookupSkip, nightJustClosed, publishNight, runNightly } from "../src/nightly.mjs";
+import { LOOKUP_MAX_AGE_MS, lookupSkip, nightJustClosed, payoutLanded, publishNight, runNightly } from "../src/nightly.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const HOUR = 60 * 60 * 1000;
 
-function lookupFile(dir, miners, ageMs = 0, now = Date.now()) {
+function lookupFile(dir, miners, ageMs = 0, now = Date.now(), updated = new Date(now).toISOString()) {
   const path = join(dir, "lookup.json");
-  writeFileSync(path, `${JSON.stringify({ miners })}\n`);
+  writeFileSync(path, `${JSON.stringify({ updated, miners })}\n`);
   const when = (now - ageMs) / 1000;
   utimesSync(path, when, when);
   return path;
@@ -142,6 +142,36 @@ test("the same night is recorded once", () => {
   assert.deepEqual(nights, ["2026-10-17.json"]);
 });
 
+test("a lookup published before the close waits, and the later run records it once", () => {
+  const now = Date.parse("2026-10-17T00:05:00.000Z");
+  const close = Date.parse("2026-10-17T00:00:00.000Z");
+  assert.equal(payoutLanded({ updated: "2026-10-16T23:59:59.000Z" }, close), false);
+  assert.equal(payoutLanded({ updated: "2026-10-17T00:00:00.000Z" }, close), true);
+  assert.equal(payoutLanded({}, close), false);
+
+  const dir = mkdtempSync(join(tmpdir(), "kore-payout-"));
+  const historyDir = join(dir, "history");
+  const publicDir = join(dir, "public");
+  const miners = { keeta_one: { fuel: "2.00000", streak: 4, paid: "1", waiting: "0" } };
+  const lookupPath = lookupFile(dir, miners, 0, now, "2026-10-16T23:50:00.000Z");
+  const lines = [];
+  const early = runNightly({ now, lookupPath, historyDir, publicDir, log: (line) => lines.push(line) });
+  assert.equal(early.skipped, true);
+  assert.equal(early.night, "2026-10-16");
+  assert.equal(lines[0], "Skip. Payout has not landed.");
+  assert.equal(existsSync(join(historyDir, "seed.json")), false);
+  assert.equal(existsSync(join(publicDir, "call-latest.json")), false);
+
+  lookupFile(dir, miners, 0, now, "2026-10-17T00:04:00.000Z");
+  const landed = runNightly({ now, lookupPath, historyDir, publicDir, log() {} });
+  const again = runNightly({ now, lookupPath, historyDir, publicDir, log() {} });
+  assert.equal(landed.skipped, false);
+  assert.equal(landed.seeded, true);
+  assert.equal(again.appended, false);
+  assert.equal(existsSync(join(historyDir, "2026-10-16.json")), false);
+});
+
+
 test("the timer units stay off the runner and the missing lookup exits clean", () => {
   const service = readFileSync(join(ROOT, "systemd/koreminer-barter-dryrun.service"), "utf8");
   const timer = readFileSync(join(ROOT, "systemd/koreminer-barter-dryrun.timer"), "utf8");
@@ -151,6 +181,7 @@ test("the timer units stay off the runner and the missing lookup exits clean", (
   assert.equal(service.includes("/opt/koreminer/"), false);
   assert.equal(service.includes("/opt/keelend"), false);
   assert.match(timer, /OnCalendar=\*-\*-\* 00:05:00 UTC/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 01:05:00 UTC/);
   assert.match(timer, /Persistent=true/);
   assert.equal(/Environment=/i.test(timer), false);
   const run = spawnSync(process.execPath, [join(ROOT, "bin/sim.mjs"), "--nightly"], { encoding: "utf8" });

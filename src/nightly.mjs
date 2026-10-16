@@ -18,11 +18,19 @@ function utcDate(ms) {
   return `${date.getUTCFullYear()}-${month}-${day}`;
 }
 
-export function nightJustClosed(now = Date.now()) {
+export function closeInstant(now = Date.now()) {
   const date = new Date(now);
   const midnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const close = date.getTime() < midnight ? midnight - DAY_MS : midnight;
-  return utcDate(close - DAY_MS);
+  return date.getTime() < midnight ? midnight - DAY_MS : midnight;
+}
+
+export function nightJustClosed(now = Date.now()) {
+  return utcDate(closeInstant(now) - DAY_MS);
+}
+
+export function payoutLanded(lookup, closeMs) {
+  const updated = Date.parse(lookup?.updated ?? "");
+  return Number.isFinite(updated) && updated >= closeMs;
 }
 
 export function lookupSkip(stat, now = Date.now()) {
@@ -92,6 +100,10 @@ export function runNightly({
     return { ok: true, skipped: true, night, seeded: false, appended: false };
   }
   const lookup = JSON.parse(readFileSync(lookupPath, "utf8"));
+  if (!payoutLanded(lookup, closeInstant(now))) {
+    log("Skip. Payout has not landed.");
+    return { ok: true, skipped: true, night, seeded: false, appended: false };
+  }
   const published = publishNight({
     night,
     lookup,

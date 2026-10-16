@@ -17,6 +17,6 @@ The ladder keeps its own streak. The dry run reads the public lookup and appends
 
 On the server, keep `/opt/koreminer-barter/data/history`. Update the code with `git fetch` and `checkout`. Do not delete the folder.
 
-The dry run can also run itself. `koreminer-barter-dryrun.timer` fires at 00:05 UTC and runs `bin/sim.mjs --nightly` for the night that just closed. It reads the public lookup and writes the call files and `ladder.json`. It does not touch the runner.
+The dry run can also run itself. `koreminer-barter-dryrun.timer` fires at 00:05 UTC and again at 01:05 UTC. It runs `bin/sim.mjs --nightly` for the night that just closed. If the public lookup was published before that close, it waits. The 01:05 run is the payout-delay fallback. It does not touch the runner.
 
 
