@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -184,22 +184,25 @@ test("the timer units stay off the runner and the missing lookup exits clean", (
   assert.match(timer, /OnCalendar=\*-\*-\* 01:05:00 UTC/);
   assert.match(timer, /Persistent=true/);
   assert.equal(/Environment=/i.test(timer), false);
-  const run = spawnSync(process.execPath, [join(ROOT, "bin/sim.mjs"), "--nightly"], { encoding: "utf8" });
+  const dir = mkdtempSync(join(tmpdir(), "kore-nightly-cli-"));
+  const lookupPath = join(dir, "missing-lookup.json");
+  const run = spawnSync(
+    process.execPath,
+    [
+      join(ROOT, "bin/sim.mjs"),
+      "--nightly",
+      "--lookup",
+      lookupPath,
+      "--history",
+      join(dir, "history"),
+      "--public",
+      join(dir, "public"),
+    ],
+    { encoding: "utf8" },
+  );
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /Skip\. Lookup is missing\./);
-  assert.equal(existsSync(LOOKUP_PROBE), false);
+  assert.equal(existsSync(lookupPath), false);
+  assert.equal(existsSync(join(dir, "history", "seed.json")), false);
 });
 
-const LOOKUP_PROBE = "/var/www/koreminer/lookup.json";
-test("this workspace has no live lookup for the nightly probe", () => {
-  assert.equal(existsSync(LOOKUP_PROBE), false);
-  assert.equal(statSafe(LOOKUP_PROBE), null);
-});
-
-function statSafe(path) {
-  try {
-    return statSync(path);
-  } catch {
-    return null;
-  }
-}

@@ -17,7 +17,14 @@ function readJson(path) {
 
 function main() {
   if (process.argv.includes("--nightly")) {
-    const outcome = runNightly();
+    const lookupPath = arg("--lookup");
+    const historyArg = arg("--history");
+    const publicArg = arg("--public");
+    const outcome = runNightly({
+      ...(lookupPath ? { lookupPath } : {}),
+      ...(historyArg ? { historyDir: assertOutsideRunner(historyArg) } : {}),
+      ...(publicArg ? { publicDir: assertOutsideRunner(publicArg) } : {}),
+    });
     if (!outcome.skipped) process.stdout.write(`${outcome.night}\n`);
     return;
   }
