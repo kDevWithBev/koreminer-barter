@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { writeAtomic } from "./atomic.mjs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const NIGHT_FILE = /^(\d{4}-\d{2}-\d{2})\.json$/;
@@ -18,11 +19,7 @@ export function assertOutsideRunner(dir) {
 }
 
 function writeJson(dir, name, body) {
-  const dest = join(dir, name);
-  if (!dest.startsWith(`${dir}/`)) throw new Error("history path refused");
-  const tmp = join(dir, `.${name}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify(body, null, 2)}\n`);
-  renameSync(tmp, dest);
+  writeAtomic(dir, name, `${JSON.stringify(body, null, 2)}\n`);
 }
 
 export function snapshotWallets(lookup) {

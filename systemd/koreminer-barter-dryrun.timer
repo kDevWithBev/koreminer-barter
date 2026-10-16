@@ -1,0 +1,11 @@
+[Unit]
+Description=Koreminer barter dry run nightly
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+AccuracySec=1s
+Persistent=true
+Unit=koreminer-barter-dryrun.service
+
+[Install]
+WantedBy=timers.target

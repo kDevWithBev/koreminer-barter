@@ -1,0 +1,7 @@
+[Unit]
+Description=Koreminer barter dry run
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/koreminer-barter
+ExecStart=/usr/bin/node /opt/koreminer-barter/bin/sim.mjs --nightly
