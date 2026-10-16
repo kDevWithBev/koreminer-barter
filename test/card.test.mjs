@@ -193,6 +193,10 @@ test("the public card text has no full address and the page stays read only", ()
   const home = readFileSync(`${ROOT}public/barter/index.html`, "utf8");
   const source = readFileSync(`${ROOT}public/barter/card.js`, "utf8");
   assert.equal(home.includes('href="/barter/card.html"'), true);
+  assert.equal(home.includes('href="/#lore"'), true);
+  assert.equal(page.includes('href="/#lore"'), true);
+  assert.equal(home.includes("/lore/"), false);
+  assert.equal(page.includes("/lore/"), false);
   assert.equal(page.includes(FOOTER), true);
   assert.equal(page.includes(WARMING), true);
   assert.equal(page.includes('fetch("/lookup.json")'), true);
