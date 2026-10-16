@@ -1,0 +1,9 @@
+{
+  "name": "koreminer-barter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "barter:sim": "node bin/sim.mjs"
+  }
+}
