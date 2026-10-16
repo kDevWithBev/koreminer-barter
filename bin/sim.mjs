@@ -1,6 +1,8 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { runCall } from "../src/engine.mjs";
+import { assertOutsideRunner, ensureHistory, loadWalletHistory } from "../src/history.mjs";
+import { buildPublicLadder } from "../src/ladder.mjs";
 
 function arg(name) {
   const index = process.argv.indexOf(name);
@@ -27,9 +29,17 @@ if (inputPath) {
 }
 input.night = night;
 
+const publicDir = assertOutsideRunner(arg("--public") ?? resolve("public/barter"));
+const historyDir = assertOutsideRunner(arg("--history") ?? resolve("data/history"));
+
 const lookupPath = arg("--lookup");
+let lookup = null;
 if (lookupPath) {
-  const lookup = readJson(lookupPath);
+  const lookupFile = resolve(lookupPath);
+  if (lookupFile === "/opt/koreminer" || lookupFile.startsWith("/opt/koreminer/")) {
+    throw new Error("lookup path refused");
+  }
+  lookup = readJson(lookupPath);
   input.mined = input.mined ?? {};
   for (const [wallet, row] of Object.entries(lookup.miners ?? {})) {
     if (input.mined[wallet]) continue;
@@ -42,8 +52,16 @@ if (lookupPath) {
 }
 
 const result = runCall(input);
-const latest = resolve("public/barter/call-latest.json");
-const dated = resolve(`public/barter/calls/${night}.json`);
+if (lookup) {
+  ensureHistory({ dir: historyDir, night, lookup });
+  const history = loadWalletHistory(historyDir);
+  const ladder = buildPublicLadder({ miners: lookup.miners, history });
+  mkdirSync(publicDir, { recursive: true });
+  writeFileSync(join(publicDir, "ladder.json"), `${JSON.stringify(ladder, null, 2)}\n`);
+}
+
+const latest = join(publicDir, "call-latest.json");
+const dated = join(publicDir, "calls", `${night}.json`);
 for (const path of [latest, dated]) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(result.publicCall, null, 2)}\n`);

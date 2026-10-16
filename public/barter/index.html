@@ -190,10 +190,16 @@ function paintLadder(ladder) {
     const wallet = document.createElement("b");
     wallet.textContent = String(row.wallet);
     const rank = document.createElement("span");
-    rank.textContent = (row.rank || "No rank yet") + " · streak " + row.streak + (row.nextRank ? " · next " + row.nextRank : "");
+    rank.textContent = (row.rank || "No rank yet") + (row.nextRank ? " · next " + row.nextRank : "");
+    const mining = document.createElement("span");
+    mining.textContent = "Mining streak " + (Number(row.miningStreak) || 0);
+    const used = Number(row.shieldsUsed) || 0;
+    const shield = used === 1 ? "1 shield used" : used + " shields used";
+    const ladderLine = document.createElement("span");
+    ladderLine.textContent = "Ladder streak " + (Number(row.ladderStreak ?? row.streak) || 0) + " (" + shield + ")";
     const extra = document.createElement("span");
     extra.textContent = "Buyer nights " + row.buyerNights + (row.message ? " · " + row.message : "");
-    li.append(wallet, rank, extra);
+    li.append(wallet, rank, mining, ladderLine, extra);
     list.append(li);
   }
   const buyers = document.getElementById("buyers");

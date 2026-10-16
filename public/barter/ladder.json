@@ -9,7 +9,9 @@
   "wallets": [
     {
       "wallet": "keeta_aabi…hd2i",
+      "miningStreak": 5,
       "streak": 5,
+      "ladderStreak": 5,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -23,13 +25,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 5,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabz…bbvy",
+      "miningStreak": 5,
       "streak": 5,
+      "ladderStreak": 5,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -43,13 +49,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 5,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aab3…vdmi",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -63,13 +73,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aaba…g4yq",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -83,13 +97,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aaba…kgoy",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -103,13 +121,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabb…2fwi",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -123,13 +145,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabd…svca",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -143,13 +169,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabd…yv5y",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -163,13 +193,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabe…76fq",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -183,13 +217,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabf…dway",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -203,13 +241,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabi…erki",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -223,13 +265,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabj…lu4y",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -243,13 +289,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabr…akja",
+      "miningStreak": 3,
       "streak": 3,
+      "ladderStreak": 3,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -263,13 +313,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 3,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aab6…ocuq",
+      "miningStreak": 2,
       "streak": 2,
+      "ladderStreak": 2,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -283,13 +337,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 2,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabj…4ddi",
+      "miningStreak": 2,
       "streak": 2,
+      "ladderStreak": 2,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -303,13 +361,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 2,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aabs…ww7a",
+      "miningStreak": 2,
       "streak": 2,
+      "ladderStreak": 2,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -323,13 +385,17 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 2,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
     },
     {
       "wallet": "keeta_aab2…fvvi",
+      "miningStreak": 0,
       "streak": 0,
+      "ladderStreak": 0,
       "rank": null,
       "nextRank": "Practice Shield",
       "nextAt": 14,
@@ -343,6 +409,8 @@
           "used": false
         }
       },
+      "shieldsUsed": 0,
+      "weight": 0,
       "buyerNights": 0,
       "buyerRank": null,
       "message": ""
