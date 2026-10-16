@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#12100e" />
+  <title>KOREMINER | Your card</title>
+  <link rel="icon" href="/icon-192.png" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Silkscreen&display=swap" />
+  <style>
+    :root { --bg:#12100e; --surface:#1c1916; --inset:#141210; --fg:#f3ead7; --muted:#b4a894; --gold:#e2b34a; --ink:#1a140c; --line:#3a342c; }
+    * { box-sizing:border-box; }
+    html { -webkit-text-size-adjust:100%; }
+    body { margin:0; background:var(--bg); color:var(--fg); font-family:Outfit,sans-serif; overflow-x:hidden; }
+    main { max-width:40rem; margin:0 auto; padding:calc(1.25rem + env(safe-area-inset-top)) 1rem calc(2.5rem + env(safe-area-inset-bottom)); }
+    .kicker, h2 { font-family:Silkscreen,monospace; letter-spacing:.14em; text-transform:uppercase; }
+    h1 { font-family:Silkscreen,monospace; font-size:clamp(1.7rem,8vw,2.6rem); margin:.4rem 0 0; line-height:1.15; }
+    h2 { margin:0 0 .75rem; font-size:.95rem; }
+    a { color:var(--gold); }
+    .nav-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:1rem; }
+    nav { display:flex; flex-wrap:wrap; gap:.5rem; }
+    .tab { display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:0 16px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-weight:600; font-size:15px; text-decoration:none; }
+    .tab.on { background:var(--gold); color:var(--ink); border-color:var(--gold); }
+    .banner, .card, .note { border:1px solid var(--line); border-radius:.9rem; }
+    .banner { margin-top:1rem; background:#2a2214; border-color:var(--gold); color:var(--gold); padding:.9rem 1rem; font-weight:700; }
+    .card { margin-top:1rem; background:var(--surface); padding:1.1rem 1rem; min-width:0; }
+    .muted { color:var(--muted); }
+    .gold { color:var(--gold); }
+    .clock { font-family:Silkscreen,monospace; font-size:clamp(1.8rem,8vw,2.6rem); letter-spacing:.06em; margin:.2rem 0; line-height:1.2; }
+    .stats { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+    .stats div, .fill li { background:var(--inset); border-radius:.8rem; padding:.75rem .7rem; min-width:0; }
+    .stats span, .fill span { color:var(--muted); font-size:.8rem; }
+    .stats b, .fill b { display:block; margin-top:.2rem; font-size:1.05rem; overflow-wrap:anywhere; }
+    .wide { grid-column:1 / -1; }
+    .fill { list-style:none; margin:.2rem 0 0; padding:0; }
+    .fill li { margin-top:.5rem; }
+    .note { margin-top:1rem; background:var(--inset); padding:1rem; line-height:1.55; }
+    p { line-height:1.55; overflow-wrap:anywhere; }
+    label { display:block; margin:0 0 .4rem; font-weight:600; }
+    .row { display:flex; gap:.5rem; }
+    input, button { font:inherit; min-width:0; }
+    input { flex:1; height:44px; padding:0 1rem; border-radius:999px; border:1px solid var(--line); background:var(--inset); color:var(--fg); font-size:16px; }
+    button { height:44px; padding:0 16px; border:0; border-radius:999px; background:var(--gold); color:var(--ink); font-size:16px; font-weight:700; cursor:pointer; }
+    .track { height:12px; margin-top:.45rem; background:var(--inset); border-radius:999px; overflow:hidden; }
+    .track i { display:block; height:100%; width:0; background:var(--gold); }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="kicker gold">Your card</p>
+    <h1>KOREMINER</h1>
+    <div class="nav-row">
+      <nav>
+        <a class="tab" href="/">The Shaft</a>
+        <a class="tab" href="/lore/">Lore</a>
+        <a class="tab" href="/barter/">Barter</a>
+        <a class="tab on" href="/barter/card.html" aria-current="page">Card</a>
+      </nav>
+    </div>
+  </header>
+  <p class="banner" id="warming" hidden>Board is warming up, check back after the close</p>
+  <section class="card">
+    <h2 class="gold">Time to the close</h2>
+    <p class="muted" id="when">—</p>
+    <p class="clock" id="clock">--:--:--</p>
+  </section>
+  <div id="ready">
+    <section class="card">
+      <h2 class="gold">Find a wallet</h2>
+      <label for="wallet">Keeta wallet</label>
+      <div class="row">
+        <input id="wallet" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="keeta_…" />
+        <button id="show" type="button">Show the card</button>
+      </div>
+      <p class="muted">The card keeps the short name on screen.</p>
+    </section>
+    <section class="card" id="result" hidden>
+      <h2 class="gold">This shift</h2>
+      <p id="miss" class="muted" hidden></p>
+      <div id="body">
+        <div class="stats">
+          <div><span>Fuel</span><b id="fuel">—</b></div>
+          <div><span>Mining streak</span><b id="mining">—</b></div>
+          <div class="wide"><span>Ladder streak</span><b id="ladder">—</b></div>
+          <div><span>Rank</span><b id="rank">—</b></div>
+          <div><span>KORE paid</span><b id="paid">—</b></div>
+          <div><span>KORE waiting</span><b id="waiting">—</b></div>
+          <div><span>Buyer nights</span><b id="buyers">—</b></div>
+        </div>
+        <p id="next" class="muted"></p>
+        <div class="track" aria-hidden="true"><i id="bar"></i></div>
+        <p id="shields"></p>
+        <p id="barterer"></p>
+        <p id="upgrades"></p>
+      </div>
+    </section>
+    <section class="card">
+      <h2 class="gold">The board</h2>
+      <p id="summary">—</p>
+      <p class="muted" id="updated">Last updated —</p>
+      <ul class="fill" id="leaders"></ul>
+    </section>
+    <section class="card">
+      <h2 class="gold">The ladder</h2>
+      <div class="stats" id="rungs"></div>
+    </section>
+  </div>
+  <p class="note">Streaks and payouts are read from public data. Nothing here is financial advice.</p>
+</main>
+<script type="module">
+import {
+  STORAGE_KEY,
+  WARMING,
+  clockText,
+  closeLabel,
+  leaderboard,
+  nextClose,
+  readPlayer,
+  rungLines,
+  shortWallet,
+  summary,
+  updatedLabel,
+  withCommas,
+  isKeetaAddress,
+} from "./card.js";
+
+const box = document.getElementById("wallet");
+const ready = document.getElementById("ready");
+const warming = document.getElementById("warming");
+let lookup = null;
+let ladder = null;
+let lookupOk = false;
+let held = "";
+
+function paintClock() {
+  const close = nextClose(new Date());
+  document.getElementById("when").textContent = closeLabel(close);
+  document.getElementById("clock").textContent = clockText(close - Date.now());
+}
+
+function paintPlayer(view) {
+  const result = document.getElementById("result");
+  result.hidden = false;
+  box.value = view.show || "";
+  const miss = document.getElementById("miss");
+  const body = document.getElementById("body");
+  if (!view.ok) {
+    body.hidden = true;
+    miss.hidden = false;
+    miss.textContent = view.text;
+    return;
+  }
+  miss.hidden = true;
+  body.hidden = false;
+  document.getElementById("fuel").textContent = view.lines.fuel.replace(/^Fuel /, "");
+  document.getElementById("mining").textContent = String(view.miningStreak);
+  document.getElementById("ladder").textContent = view.lines.ladder;
+  document.getElementById("rank").textContent = view.kind === "no-ladder" ? "No ladder record yet." : (view.rank || "No rank yet");
+  document.getElementById("paid").textContent = view.lines.paid.replace(/ paid$/, "");
+  document.getElementById("waiting").textContent = view.lines.waiting.replace(/ waiting$/, "");
+  document.getElementById("buyers").textContent = view.buyerNights == null ? view.lines.buyers : String(view.buyerNights);
+  document.getElementById("next").textContent = view.lines.next;
+  document.getElementById("bar").style.width = `${Math.round(view.progress * 100)}%`;
+  document.getElementById("shields").textContent = view.lines.shields;
+  document.getElementById("barterer").textContent = view.lines.barterer;
+  document.getElementById("upgrades").textContent = view.lines.upgrades;
+}
+
+function paintBoard() {
+  document.getElementById("summary").textContent = summary(lookup).line;
+  document.getElementById("updated").textContent = updatedLabel(lookup?.updated);
+  const list = document.getElementById("leaders");
+  list.replaceChildren();
+  for (const row of leaderboard(lookup)) {
+    const li = document.createElement("li");
+    const name = document.createElement("b");
+    name.textContent = row.place + ". " + row.wallet;
+    const meta = document.createElement("span");
+    meta.textContent = "streak " + row.streak + " · " + withCommas(row.paid) + " KORE";
+    li.append(name, meta);
+    list.append(li);
+  }
+  const rungs = document.getElementById("rungs");
+  rungs.replaceChildren();
+  for (const line of rungLines(ladder)) {
+    const box = document.createElement("div");
+    const label = document.createElement("span");
+    const value = document.createElement("b");
+    const cut = line.lastIndexOf(" ");
+    label.textContent = line.slice(0, cut);
+    value.textContent = line.slice(cut + 1);
+    box.append(label, value);
+    rungs.append(box);
+  }
+}
+
+function lookupWallet(typed) {
+  const shortHeld = held && isKeetaAddress(held) ? shortWallet(held) : "";
+  if (held && (typed === "" || typed === shortHeld)) return held;
+  return typed.toLowerCase();
+}
+
+function show(typed) {
+  if (!lookupOk) {
+    paintPlayer({ ok: false, kind: "lookup", text: WARMING, show: "" });
+    return;
+  }
+  const wallet = lookupWallet(typed);
+  const view = readPlayer({ wallet, lookup, ladder, lookupOk });
+  if (view.kind === "malformed") {
+    held = "";
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* this browser is keeping the last wallet to itself */ }
+  } else if (isKeetaAddress(wallet)) {
+    held = wallet;
+    try { localStorage.setItem(STORAGE_KEY, wallet); } catch { /* the card still renders this time */ }
+  }
+  paintPlayer(view);
+}
+
+document.getElementById("show").addEventListener("click", () => show(box.value.trim()));
+box.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") show(box.value.trim());
+});
+
+paintClock();
+setInterval(paintClock, 1000);
+
+try { held = localStorage.getItem(STORAGE_KEY) || ""; } catch { held = ""; }
+
+const lookupFetch = fetch("/lookup.json").then((response) => {
+  if (!response.ok) throw new Error("lookup");
+  return response.json();
+});
+const ladderFetch = fetch("/barter/ladder.json")
+  .then((response) => (response.ok ? response.json() : { wallets: [], rungs: {} }))
+  .catch(() => ({ wallets: [], rungs: {} }));
+const callFetch = fetch("/barter/call-latest.json").then((response) => response.ok ? response.json() : null).catch(() => null);
+
+Promise.all([lookupFetch, ladderFetch, callFetch]).then(([board, ranks]) => {
+  lookup = board;
+  ladder = ranks;
+  lookupOk = true;
+  warming.hidden = true;
+  ready.hidden = false;
+  paintBoard();
+  if (isKeetaAddress(held)) show(shortWallet(held));
+}).catch(() => {
+  lookupOk = false;
+  ready.hidden = true;
+  warming.hidden = false;
+  warming.textContent = WARMING;
+});
+</script>
+</body>
+</html>
