@@ -1,4 +1,4 @@
-import { r8 } from "./money.mjs";
+import { r8, wholeKore } from "./money.mjs";
 
 const BANNED = /floor|yield|\bapr\b|dividend|passive income|guaranteed|more rewards coming/i;
 
@@ -9,24 +9,29 @@ export function truncateWallet(wallet) {
 }
 
 export function toPublic({ night, cleared }) {
+  const kore = (value) => {
+    const amount = wholeKore(value);
+    if (amount !== value) throw new Error("public KORE refused");
+    return amount;
+  };
   const body = {
     mode: "dry_run",
     night,
     status: cleared.status,
     clearingPrice: cleared.price == null ? null : r8(cleared.price),
-    koreMatched: r8(cleared.koreMatched),
+    koreMatched: kore(cleared.koreMatched),
     ktaMatched: r8(cleared.ktaMatched),
     fillCount: cleared.fills.length,
-    houseBuyKore: r8(cleared.houseBuyKore),
-    houseSellKore: r8(cleared.houseSellKore),
+    houseBuyKore: kore(cleared.houseBuyKore),
+    houseSellKore: kore(cleared.houseSellKore),
     houseKta: r8(cleared.house.kta),
-    houseKore: r8(cleared.house.kore),
+    houseKore: kore(cleared.house.kore),
     houseKorePct: r8(cleared.houseKorePct),
     feesToHouse: r8(cleared.feesToHouse),
     fills: cleared.fills.map((fill) => ({
       wallet: truncateWallet(fill.wallet),
       side: fill.side,
-      amount: r8(fill.amount),
+      amount: kore(fill.amount),
       fee: r8(fill.fee),
       confirmed: true,
     })),

@@ -179,7 +179,7 @@ test("house buys leftover only inside the cap, the pot, and the stop", () => {
   );
   assert.equal(bought.publicCall.clearingPrice, 0.98);
   assert.ok(bought.publicCall.houseBuyKore * 0.98 <= 5 + 1e-8);
-  assert.ok(bought.publicCall.houseBuyKore > 5);
+  assert.equal(bought.publicCall.houseBuyKore, 5);
 
   const stopped = runCall(
     night({
@@ -380,6 +380,38 @@ test("no reference and no crossing orders does not clear", () => {
   assert.ok(miners.publicCall.clearingPrice < 1);
   assert.equal(miners.publicCall.houseBuyKore, 0);
   assert.equal(miners.publicCall.houseSellKore, 0);
+});
+
+test("KORE moves in whole coins and the fee stays in KTA", () => {
+  const odd = runCall(
+    night({
+      balances: { seller: { kore: 5.8, kta: 0 }, buyer: { kore: 0, kta: 100 } },
+      intents: [{ wallet: "seller", side: "sell_half", submitted_at: OPEN }, buy("buyer", 10, 1.2)],
+    }),
+  );
+  assert.equal(odd.server.orders.sells[0].qty, 2);
+  assert.equal(odd.publicCall.fills.find((fill) => fill.side === "sell").amount, 2);
+
+  const one = runCall(
+    night({
+      balances: { holder: { kore: 1, kta: 0 } },
+      intents: [{ wallet: "holder", side: "sell_half", submitted_at: OPEN }],
+    }),
+  );
+  assert.equal(one.server.orders.sells.length, 0);
+  assert.deepEqual(one.server.adjustments, [{ wallet: "holder", instead: "sell_all" }]);
+
+  const partial = runCall(
+    night({
+      balances: { seller: { kore: 5, kta: 0 }, buyer: { kore: 0, kta: 2.9 * 1.005 } },
+      intents: [sell("seller", 5), buy("buyer", 10.9, 1)],
+    }),
+  );
+  const bought = partial.publicCall.fills.find((fill) => fill.side === "buy");
+  assert.equal(bought.amount, 2);
+  assert.equal(bought.fee, 0.01);
+  assert.equal(Number.isInteger(bought.amount), true);
+  assert.ok(partial.publicCall.fills.every((fill) => Number.isInteger(fill.amount)));
 });
 
 test("clearing price helper ignores a skipper", () => {

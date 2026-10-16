@@ -1,4 +1,4 @@
-import { r8 } from "./money.mjs";
+import { r8, wholeKore } from "./money.mjs";
 
 function byPriority(a, b) {
   if (a.half !== b.half) return a.half ? 1 : -1;
@@ -79,7 +79,7 @@ function matchAt(sells, buys, price, cfg, barterers) {
       continue;
     }
     const buyRate = feeRate(buy.wallet, cfg, barterers);
-    const qty = Math.min(sell.left, buy.left, afford(buy.cash, price, buyRate));
+    const qty = wholeKore(Math.min(sell.left, buy.left, afford(buy.cash, price, buyRate)));
     if (qty <= 1e-12) {
       j += 1;
       continue;
@@ -113,11 +113,11 @@ function houseTake(side, qty, price, quoted, house, cfg, spent) {
     if (!quoted.mayBuy || !(quoted.bid > 0)) return 0;
     if (price > quoted.bid + 1e-12) return 0;
     const cash = Math.min(room, house.kta, cfg.potKta);
-    return Math.min(qty, cash / price);
+    return wholeKore(Math.min(qty, cash / price));
   }
   if (!quoted.maySell || !(quoted.ask > 0) || !(house.kore > 0)) return 0;
   if (price + 1e-12 < quoted.ask) return 0;
-  return Math.min(qty, house.kore, room / price);
+  return wholeKore(Math.min(qty, house.kore, room / price));
 }
 
 export function clearNight({ sells, buys, quoted, cfg, house, confirms, barterers }) {

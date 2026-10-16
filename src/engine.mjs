@@ -31,6 +31,7 @@ export function runCall(input) {
     publicCall: toPublic({ night: input.night, cleared }),
     server: {
       rejected: prepared.rejected,
+      adjustments: prepared.adjustments,
       skips: cleared.skips,
       eligibility: weights,
       flags: input.cluster ?? {},
