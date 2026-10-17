@@ -12,6 +12,17 @@ function text(value) {
   return value.publicKeyString?.toString?.() ?? "";
 }
 
+function externalOf(value) {
+  if (typeof value === "string") {
+    const hex = value.startsWith("0x") || value.startsWith("0X") ? value.slice(2) : value;
+    if (/^[0-9a-fA-F]{64}$/.test(hex)) return `0x${hex.toLowerCase()}`;
+  }
+  if (value instanceof Uint8Array && value.length === 32) {
+    return `0x${[...value].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return "";
+}
+
 export function readStaple(row, base) {
   const staple = row?.voteStaple;
   if (!staple?.timestamp || !staple?.blocksHash) return null;
@@ -30,7 +41,11 @@ export function readStaple(row, base) {
       try { amount = BigInt(op.amount); } catch { amount = 0n; }
       if (from === intake && to === sink && token === base) own = true;
       if (to === intake && token === base && from !== intake && from !== sink && amount > 0n) {
-        deposits.push({ from, amount });
+        deposits.push({
+          from,
+          amount,
+          external: externalOf(op.external) || externalOf(block.external),
+        });
       }
     }
     if (own) ownPicks += 1;

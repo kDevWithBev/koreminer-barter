@@ -15,7 +15,7 @@ export function stakeOf(books) {
 }
 
 export function accounted(books) {
-  return books.share.reserve + stakeOf(books) + books.operator;
+  return books.share.reserve + stakeOf(books) + books.operator + (books.parked ?? 0n);
 }
 
 export function createBooks(nowMs, balance) {
@@ -36,15 +36,22 @@ export function createBooks(nowMs, balance) {
     pendingDrops: [],
     pendingSince: 0,
     arm: startMs,
+    parked: 0n,
+    unresolved: [],
   };
 }
 
 function applyBurn(books, fee, nowMs) {
-  const cover = stakeOf(books) + books.operator;
+  const parked = books.parked ?? 0n;
+  const cover = stakeOf(books) + books.operator + parked;
   if (fee < 0n || fee > cover) return false;
   const left = burn(books.share, fee, nowMs);
-  if (left > books.operator) return false;
-  books.operator -= left;
+  if (left > books.operator + parked) return false;
+  if (left <= books.operator) books.operator -= left;
+  else {
+    books.parked = parked - (left - books.operator);
+    books.operator = 0n;
+  }
   return true;
 }
 
@@ -62,8 +69,13 @@ export function ingest(books, staple) {
   let reserve = books.share.reserve;
   let stake = stakeOf(books);
   let operator = books.operator;
+  let parked = books.parked ?? 0n;
   for (const item of staple.deposits ?? []) {
     if (item.amount <= 0n) continue;
+    if (item.credit === false) {
+      parked += item.amount;
+      continue;
+    }
     if (staple.timeMs < books.arm) {
       operator += item.amount;
       continue;
@@ -79,9 +91,16 @@ export function ingest(books, staple) {
   }
   const drops = books.pendingDrops.slice(0, staple.ownPicks ?? 0);
   const burnSum = drops.reduce((sum, drop) => sum + drop, 0n);
-  if (burnSum > stake + operator) return "halt-reserve";
+  if (burnSum > stake + operator + parked) return "halt-reserve";
+  books.parked ??= 0n;
+  books.unresolved ??= [];
   for (const item of staple.deposits ?? []) {
     if (item.amount <= 0n) continue;
+    if (item.credit === false) {
+      books.parked += item.amount;
+      books.unresolved.push({ tx: String(item.tx || item.external || "none"), amount: item.amount.toString() });
+      continue;
+    }
     if (staple.timeMs < books.arm) {
       books.operator += item.amount;
       continue;
@@ -114,7 +133,7 @@ export function reconcile(books, balance, chainMs, nowMs) {
     const waited = books.pendingSince > 0 && nowMs - books.pendingSince >= burnWaitMs;
     if (!(waited && pending === short)) return "waiting-burn";
   }
-  if (short > stakeOf(books) + books.operator) return "halt-reserve";
+  if (short > stakeOf(books) + books.operator + (books.parked ?? 0n)) return "halt-reserve";
   if (!applyBurn(books, short, chainMs)) return "halt-reserve";
   books.pendingDrops = [];
   books.pendingSince = 0;
@@ -187,6 +206,18 @@ export function publicBooks(books, sending = false) {
       });
       continue;
     }
+    if (from.startsWith("base:")) {
+      const base = from.slice(5);
+      if (/^0x[0-9a-f]{40}$/.test(base)) {
+        held.push({
+          base,
+          fuel: kta(row.fuel),
+          waiting: whole(row.waiting).toString(),
+          note: "Base deposit. Link a Keeta address at /claim. Not paid until linked.",
+        });
+      }
+      continue;
+    }
     const share = all === 0n || row.fuel === 0n ? "0.0000" : ratio(row.fuel, all);
     miners[from] = {
       fuel: kta(row.fuel),
@@ -198,7 +229,7 @@ export function publicBooks(books, sending = false) {
       paid: row.paid.toString(),
     };
   }
-  const board = ranked.filter(({ from }) => from !== bridge).slice(0, 20).map(({ from, row }) => ({
+  const board = ranked.filter(({ from }) => from !== bridge && !String(from).startsWith("base:")).slice(0, 20).map(({ from, row }) => ({
     from,
     counted: koreUnits(row.counted),
   }));
@@ -233,6 +264,8 @@ export function booksToJson(books) {
     depth: mapToObject(books.share.depth),
     seen: [...books.share.seen.keys()],
     streak: Object.fromEntries([...books.share.streak.entries()].map(([key, row]) => [key, row])),
+    parked: (books.parked ?? 0n).toString(),
+    unresolved: books.unresolved ?? [],
   };
 }
 
@@ -261,5 +294,7 @@ export function booksFromJson(raw) {
     pendingDrops: (raw.pendingDrops ?? []).map((drop) => BigInt(drop)),
     pendingSince: Number(raw.pendingSince) || 0,
     arm: Number(raw.arm) || startMs,
+    parked: BigInt(raw.parked ?? "0"),
+    unresolved: Array.isArray(raw.unresolved) ? raw.unresolved : [],
   };
 }

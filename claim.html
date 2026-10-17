@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Claim bridged KORE · Koreminer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui,sans-serif;background:#111;color:#eee;max-width:40rem;margin:2rem auto;padding:0 1rem}
+.warn{background:#332200;border:1px solid #664400;padding:1rem;border-radius:8px;margin-bottom:1.5rem}
+label{display:block;margin:.8rem 0 .2rem}
+input,button{font:inherit;padding:.5rem;width:100%;box-sizing:border-box}
+button{margin-top:1rem;background:#c8a24b;color:#111;border:0;border-radius:6px;cursor:pointer}
+.muted{color:#aaa;font-size:.9rem}
+</style>
+</head>
+<body>
+<h1>Claim bridged KORE</h1>
+<div class="warn">
+<strong>This page is only for KTA you bridged from Base directly to the shaft.</strong><br>
+If you sent KTA from a Keeta wallet you control, your KORE is already on the main board. Do not use this page.
+</div>
+<p class="muted">Connect the Base wallet that sent the KTA. Sign a message. Enter the Keeta address you want the KORE paid to. No gas. No transfer.</p>
+<label>Base address (must be 42 characters)</label>
+<input id="base" placeholder="0x..." maxlength="42">
+<label>Keeta address to receive KORE</label>
+<input id="keeta" placeholder="keeta_...">
+<button id="sign">Sign claim</button>
+<pre id="out" class="muted"></pre>
+<script>
+const out = document.getElementById("out");
+document.getElementById("sign").onclick = async () => {
+  const base = document.getElementById("base").value.trim();
+  const keeta = document.getElementById("keeta").value.trim();
+  if (base.length !== 42 || !base.startsWith("0x") || !/^0x[0-9a-fA-F]{40}$/.test(base)) {
+    out.textContent = "Base address must be exactly 42 characters (0x + 40 hex).";
+    return;
+  }
+  if (!keeta.startsWith("keeta_") || keeta.length < 20) {
+    out.textContent = "Enter a Keeta address.";
+    return;
+  }
+  const nonce = crypto.randomUUID();
+  const date = new Date().toISOString().slice(0,10);
+  const msg = "Link Base " + base.toLowerCase() + " to Keeta " + keeta + " for Koreminer, nonce " + nonce + ", " + date;
+  if (!window.ethereum) { out.textContent = "No Base wallet found."; return; }
+  try {
+    const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+    if (accounts[0].toLowerCase() !== base.toLowerCase()) {
+      out.textContent = "Connected wallet does not match the Base address.";
+      return;
+    }
+    const sig = await ethereum.request({ method: "personal_sign", params: [msg, accounts[0]] });
+    out.textContent = "Signed. Send this to the server:\\n\\n" + JSON.stringify({ base, keeta, nonce, date, sig, msg }, null, 2);
+    // POST to /claim/verify when the endpoint is live
+  } catch (e) {
+    out.textContent = "Sign cancelled or failed.";
+  }
+};
+</script>
+</body>
+</html>

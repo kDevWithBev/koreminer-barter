@@ -1,14 +1,15 @@
 // Claim checker. It does not touch the runner, the seed, or a payout.
 import { createServer } from "node:http";
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
-import { checkClaim, KNOWN_BASE, BRIDGE } from "./claim.mjs";
+import { mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { BRIDGE } from "./claim.mjs";
+import { checkLink, commitLink, readLinks, saveLinks } from "./links.mjs";
 import { signatureOwns } from "./claim-sig.mjs";
 import * as KeetaNet from "@keetanetwork/keetanet-client";
 
 const dir = "/opt/koreminer";
 const claims = `${dir}/claims`;
 const noncesPath = `${claims}/nonces.json`;
-const approvedPath = `${claims}/approved.json`;
+const linksPath = `${dir}/links.json`;
 const rpc = process.env.BASE_RPC || "https://base.gateway.tenderly.co";
 const hits = new Map();
 
@@ -33,7 +34,7 @@ function limited(ip) {
 async function ethCall(to, data) {
   const response = await fetch(rpc, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "user-agent": "koreminer/1.0" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
   });
   const body = await response.json();
@@ -61,7 +62,7 @@ async function decide(body) {
   if (body?.check === "address") {
     return payable(body.keeta) ? { ok: true } : { ok: false, reason: "bad-keeta" };
   }
-  const checked = checkClaim(body);
+  const checked = checkLink(body);
   if (!checked.ok) return checked;
   if (!payable(checked.keeta)) return { ok: false, reason: "bad-keeta" };
   const nonces = readNonces();
@@ -73,19 +74,10 @@ async function decide(body) {
     call: ethCall,
   });
   if (!owned) return { ok: false, reason: "bad-signature" };
-  if (existsSync(approvedPath)) return { ok: false, reason: "already-waiting" };
+  const links = commitLink(readLinks(linksPath), checked);
   nonces.push(checked.nonce);
   writeJson(noncesPath, nonces);
-  try {
-    writeFileSync(approvedPath, JSON.stringify({
-      base: checked.base,
-      keeta: checked.keeta,
-      nonce: checked.nonce,
-      date: checked.date,
-    }), { flag: "wx" });
-  } catch {
-    return { ok: false, reason: "already-waiting" };
-  }
+  saveLinks(linksPath, links);
   return { ok: true, base: checked.base, keeta: checked.keeta };
 }
 
@@ -93,7 +85,7 @@ mkdirSync(claims, { recursive: true });
 const server = createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, base: KNOWN_BASE }));
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
   if (req.method !== "POST" || req.url !== "/verify") {

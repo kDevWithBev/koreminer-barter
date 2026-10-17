@@ -112,7 +112,7 @@ document.getElementById("go").onclick = async () => {
   if (!sure) { out.textContent = "Not signed."; return; }
   const nonce = crypto.randomUUID();
   const date = new Date().toISOString().slice(0, 10);
-  const message = "Koreminer claim\nBase: " + base.toLowerCase() + "\nKeeta: " + keeta + "\nNonce: " + nonce + "\nDate: " + date;
+  const message = "Link Base " + base.toLowerCase() + " to Keeta " + keeta + " for Koreminer, nonce " + nonce + ", " + date;
   try {
     const accounts = await ethereum.request({ method: "eth_requestAccounts" });
     if (accounts[0].toLowerCase() !== base.toLowerCase()) {

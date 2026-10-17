@@ -5,7 +5,8 @@ import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
 import { applyPaid, choosePayout, floorAfter, judgeIntent } from "./pay.mjs";
-import { applyClaimFile } from "./claim.mjs";
+import { attributeDeposits } from "./base-credit.mjs";
+import { applyLinks, readLinks } from "./links.mjs";
 
 const intake =
   "keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa";
@@ -23,6 +24,7 @@ const intentPath = `${dir}/payout-intent.json`;
 const floorPath = `${dir}/kore-floor.txt`;
 const lookupPath = `${dir}/lookup.json`;
 const publicLookup = "/var/www/koreminer/lookup.json";
+const linksPath = `${dir}/links.json`;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,8 +110,10 @@ async function syncChain(books, baseText) {
     if (staple) staples.push(staple);
   }
   staples.sort((a, b) => a.timeMs - b.timeMs);
+  const links = readLinks(linksPath);
   for (const staple of staples) {
-    if (ingestSafe(books, staple) === "halt-reserve") return "halt-reserve";
+    const named = await attributeDeposits(staple, { links });
+    if (ingestSafe(books, named) === "halt-reserve") return "halt-reserve";
   }
   if (rows.length > 0) books.cursor = rows[0].voteStaple.blocksHash.toString();
   const chainMs = staples.reduce((max, staple) => Math.max(max, staple.timeMs), books.share.lastMs);
@@ -142,6 +146,12 @@ function recordedKoreFloor() {
   } catch {
     return null;
   }
+}
+
+if (process.argv.includes("--dry-run")) {
+  const { runDry } = await import("./pay-dry.mjs");
+  runDry(process.argv);
+  process.exit(0);
 }
 
 if (existsSync(`${dir}/STOP`) || existsSync(`${dir}/HALT`)) {
@@ -317,9 +327,9 @@ while (!existsSync(`${dir}/STOP`)) {
     const status = reconcile(books, balance, chain, Date.now());
     saveBooks(books);
     try {
-      if (applyClaimFile(books, dir)) saveBooks(books);
+      if (applyLinks(books, readLinks(linksPath))) saveBooks(books);
     } catch (err) {
-      console.error("Claim skipped.", err instanceof Error ? err.message : "unknown");
+      console.error("Link skipped.", err instanceof Error ? err.message : "unknown");
     }
     if (status === "halt-reserve") {
       writeFileSync(`${dir}/HALT`, "burn would spend the reserve\n");
