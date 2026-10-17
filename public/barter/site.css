@@ -6,12 +6,13 @@ main { max-width:64rem; margin:0 auto; padding:calc(1.25rem + env(safe-area-inse
 .kicker, h2 { font-family:Silkscreen,monospace; letter-spacing:.14em; text-transform:uppercase; }
 h1 { font-family:Silkscreen,monospace; font-size:clamp(1.7rem,8vw,3rem); margin:.4rem 0 0; line-height:1.15; }
 h2 { margin:0 0 .75rem; font-size:.95rem; }
-.title-row { display:flex; justify-content:space-between; align-items:flex-start; gap:.75rem; }
+.title-row { display:flex; align-items:center; flex-wrap:nowrap; gap:.5rem; }
+.title-row .kicker { margin:0; flex:none; }
 .nav-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:1rem; }
 .gold { color:var(--gold); }
 .muted { color:var(--muted); }
 .badge, .tab, .card, button { border:1px solid var(--line); }
-.badge { display:inline-flex; align-items:center; box-sizing:border-box; height:44px; max-width:100%; margin:0; padding:0 16px; background:var(--surface); color:var(--gold); border-radius:999px; }
+.badge { display:inline-flex; align-items:center; box-sizing:border-box; height:32px; max-width:100%; margin:0 0 0 auto; padding:0 6px; background:var(--surface); color:var(--gold); border-radius:999px; white-space:nowrap; word-break:normal; overflow-wrap:normal; flex:0 1 auto; min-width:0; font-size:clamp(8px, 2.82vw, 11px); line-height:1; }
 nav { display:flex; flex-wrap:wrap; gap:.5rem; margin:0; }
 .tab, a.tab, button.tab { appearance:none; -webkit-appearance:none; display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; height:44px; min-height:44px; max-height:44px; margin:0; padding:0 16px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-family:Outfit,sans-serif; font-size:15px; font-weight:600; line-height:1; letter-spacing:0; text-decoration:none; cursor:pointer; white-space:nowrap; }
 .tab.on, a.tab.on, button.tab.on { background:var(--gold); color:var(--ink); border-color:var(--gold); font-weight:600; }
@@ -62,4 +63,5 @@ th { color:var(--muted); font-weight:600; }
   .boss img { width:9.5rem; height:9.5rem; aspect-ratio:1; align-self:auto; }
   .pair, .steps { grid-template-columns:1fr 1fr; }
   .card { padding:1.1rem 1.15rem; }
+  .badge { height:44px; padding:0 16px; font-size:15px; }
 }
