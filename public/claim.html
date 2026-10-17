@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Claim a Base deposit · KOREMINER</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Silkscreen&display=swap" />
+  <style>
+    :root { --bg:#12100e; --surface:#1c1916; --inset:#141210; --fg:#f3ead7; --muted:#b4a894; --gold:#e2b34a; --ink:#1a140c; --line:#3a342c; }
+    * { box-sizing:border-box; }
+    html { -webkit-text-size-adjust:100%; }
+    body { margin:0; background:var(--bg); color:var(--fg); font-family:Outfit,sans-serif; font-size:16px; overflow-x:hidden; }
+    main { max-width:40rem; margin:0 auto; padding:calc(1.25rem + env(safe-area-inset-top)) 1rem calc(2.5rem + env(safe-area-inset-bottom)); }
+    h1 { font-family:Silkscreen,monospace; font-size:clamp(1.25rem,7vw,1.7rem); line-height:1.25; margin:1rem 0 .5rem; }
+    p, h1, strong { overflow-wrap:anywhere; }
+    p { line-height:1.55; }
+    a { color:var(--gold); }
+    .back { display:inline-flex; align-items:center; min-height:44px; padding:0 16px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-weight:600; font-size:15px; text-decoration:none; }
+    .warn { background:#2a2214; border:1px solid var(--gold); border-radius:.9rem; padding:1rem; margin:1rem 0; min-width:0; }
+    label { display:block; margin:1rem 0 .35rem; font-size:15px; }
+    input, button { width:100%; max-width:100%; min-width:0; font:inherit; }
+    input { height:44px; padding:0 1rem; border-radius:999px; border:1px solid var(--line); background:var(--inset); color:var(--fg); font-size:16px; }
+    button { height:44px; margin-top:.25rem; padding:0 16px; border:0; border-radius:999px; background:var(--gold); color:var(--ink); font-size:16px; font-weight:700; cursor:pointer; }
+    button:disabled { background:#3a342c; color:var(--muted); cursor:not-allowed; }
+    .muted { color:var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <p><a class="back" href="/">Back to the shaft</a></p>
+  <div class="warn">
+    <strong>Stop if you sent KTA from a Keeta wallet.</strong>
+    <p>This page is not for you. Your fuel is already on the KORE board. Whole coins are paid to that same Keeta wallet at the close. There is no claim. Signing here does nothing for a native deposit.</p>
+  </div>
+  <h1>Claim a Base deposit</h1>
+  <p>Use this page only if you sent KTA from Base, through the bridge, and the destination was the shaft. The bridge signed that deposit. KORE cannot cross back to Base, and it will not be paid to the bridge.</p>
+  <p class="muted">You need a Keeta wallet first. Create a keeta_ address you control, then come back. Connect the same Base wallet that bridged the KTA and sign a message. No gas. No token moves on Base. Payment is not instant. It can take an additional 24 hours.</p>
+  <p class="muted">Only the Base address that actually bridged the fuel is accepted. Any other Base address is refused. Do not paste a seed or a private key on this page.</p>
+  <p class="muted" id="owed">The amount waiting is shown here when the shaft has a Base deposit on hold.</p>
+  <label>Base address, 42 characters</label>
+  <input id="base" maxlength="42" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder="0x...">
+  <label>Keeta address that should receive the KORE</label>
+  <input id="keeta" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder="keeta_...">
+  <div class="warn">
+    <strong>Check the Keeta address. This cannot be undone.</strong>
+    <p>The first signature wins. If that keeta_ address is wrong, the KORE is still paid there. Payment is not instant. It can take an additional 24 hours.</p>
+  </div>
+  <button id="go" type="button" disabled>Sign the claim</button>
+  <p class="muted" id="out"></p>
+</main>
+<script>
+const out = document.getElementById("out");
+const baseInput = document.getElementById("base");
+const go = document.getElementById("go");
+const keetaInput = document.getElementById("keeta");
+let keetaOk = "";
+let timer;
+keetaInput.addEventListener("input", () => {
+  const keeta = keetaInput.value.trim();
+  go.disabled = true;
+  keetaOk = "";
+  clearTimeout(timer);
+  if (!/^keeta_[a-z0-9]{40,80}$/.test(keeta)) {
+    out.textContent = keeta ? "That is not a Keeta address. The claim cannot be signed." : "";
+    return;
+  }
+  out.textContent = "Checking the Keeta address.";
+  timer = setTimeout(async () => {
+    try {
+      const response = await fetch("/claim/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ check: "address", keeta }),
+      });
+      const result = await response.json();
+      if (keetaInput.value.trim() !== keeta) return;
+      if (result.ok) {
+        keetaOk = keeta;
+        go.disabled = false;
+        out.textContent = "That Keeta address can be paid.";
+      } else {
+        out.textContent = "That is not a Keeta address. The claim cannot be signed.";
+      }
+    } catch {
+      out.textContent = "The claim checker is not answering. The claim cannot be signed.";
+    }
+  }, 300);
+});
+fetch("/lookup.json?t=" + Date.now()).then((r) => r.json()).then((book) => {
+  const held = (book.held || [])[0];
+  if (!held) return;
+  document.getElementById("owed").textContent = "Base " + held.base + " has " + held.waiting + " KORE waiting. Fuel " + held.fuel + " KTA. This is not a Keeta miner.";
+}).catch(() => {});
+document.getElementById("go").onclick = async () => {
+  const base = baseInput.value.trim();
+  const keeta = document.getElementById("keeta").value.trim();
+  if (keeta !== keetaOk) {
+    go.disabled = true;
+    out.textContent = "That is not a Keeta address. The claim cannot be signed.";
+    return;
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(base) || base.length !== 42) {
+    out.textContent = "The Base address must be 0x and 40 hex characters. 42 characters in all.";
+    return;
+  }
+  if (!/^keeta_[a-z0-9]{40,80}$/.test(keeta)) {
+    out.textContent = "Enter the Keeta address that should receive the KORE. A Base address cannot receive it.";
+    return;
+  }
+  if (!window.ethereum) { out.textContent = "Open this page in the Base wallet's browser."; return; }
+  const sure = confirm("KORE goes to " + keeta + ".\n\nA wrong Keeta address cannot be undone.\nPayment can take an additional 24 hours.\n\nSign this claim?");
+  if (!sure) { out.textContent = "Not signed."; return; }
+  const nonce = crypto.randomUUID();
+  const date = new Date().toISOString().slice(0, 10);
+  const message = "Koreminer claim\nBase: " + base.toLowerCase() + "\nKeeta: " + keeta + "\nNonce: " + nonce + "\nDate: " + date;
+  try {
+    const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+    if (accounts[0].toLowerCase() !== base.toLowerCase()) {
+      out.textContent = "The connected wallet is " + accounts[0] + ". Switch to the Base address that bridged the KTA.";
+      return;
+    }
+    const signature = await ethereum.request({ method: "personal_sign", params: [message, accounts[0]] });
+    const response = await fetch("/claim/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ base: base.toLowerCase(), keeta, nonce, date, signature }),
+    });
+    const result = await response.json();
+    out.textContent = result.ok
+      ? "Signed. Nothing moved on Base. Whole KORE will be paid to " + keeta + ". This cannot be undone. Payment can take an additional 24 hours."
+      : "Not accepted. " + (result.reason || "Try again.");
+  } catch (err) {
+    out.textContent = err && err.code === 4001 ? "The signature was cancelled." : "The claim checker is not answering yet. The signature was not sent on Base.";
+  }
+};
+</script>
+</body>
+</html>
