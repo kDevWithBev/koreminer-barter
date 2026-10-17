@@ -124,7 +124,7 @@ test("the card story follows the ladder streak at each rank boundary", () => {
   const at = (days) => rankStory(days);
   assert.equal(at(0).title, "Miner");
   assert.equal(at(0).badge, "");
-  assert.equal(at(0).portrait, "/cheetah-miner.jpg");
+  assert.equal(at(0).portrait, "/miner-start.jpg");
   assert.equal(at(0).caption, "The miner with the pick. Keep the streak warm tonight.");
   assert.equal(at(0).next, "Next rank in 14 days");
   assert.equal(at(13).title, "Miner");
@@ -157,6 +157,8 @@ test("the card story follows the ladder streak at each rank boundary", () => {
   assert.equal(at(84).portrait, "/barterer.jpg");
   assert.equal(at(84).caption, "Eighty-four days mined. Barterers get the practice call first.");
   assert.equal(at(84).next, "");
+  assert.equal(at(27).portrait, "/miner-start.jpg");
+  assert.equal(at(28).portrait, "/cheetah-miner.jpg");
   assert.equal(at(13).title === "Shift Boss", false);
   assert.equal(at(27).portrait.includes("barterer"), false);
 });

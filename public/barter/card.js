@@ -47,8 +47,8 @@ export function rankStory(streak) {
   const miner = {
     title: "Miner",
     badge: "",
-    portrait: "/cheetah-miner.jpg",
-    alt: "A cheetah miner in a helmet, holding a pick",
+    portrait: "/miner-start.jpg",
+    alt: "A young cheetah miner in a helmet, holding a pick",
     caption: "The miner with the pick. Keep the streak warm tonight.",
   };
   if (days >= 84) {
