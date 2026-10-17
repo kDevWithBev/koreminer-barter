@@ -20,7 +20,7 @@
   <header class="top">
     <div class="title-row">
       <div>
-        <p class="kicker gold">Barter</p>
+        <p class="kicker gold shaft-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.531 12.469 6.619 20.38a1 1 0 1 1-3-3l7.912-7.912"/><path d="M15.686 4.314A12.5 12.5 0 0 0 5.461 2.958 1 1 0 0 0 5.58 4.71a22 22 0 0 1 6.318 3.393"/><path d="M17.7 3.7a1 1 0 0 0-1.4 0l-4.6 4.6a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4z"/><path d="M19.686 8.314a12.501 12.501 0 0 1 1.356 10.225 1 1 0 0 1-1.751-.119 22 22 0 0 0-3.393-6.319"/></svg>Barter</p>
         <h1>KOREMINER</h1>
       </div>
       <a class="x-link" href="https://x.com/Kore_Miner" target="_blank" rel="noopener noreferrer" aria-label="KOREMINER on X">
@@ -37,7 +37,7 @@
       <p class="badge" id="picks">Picks live</p>
     </div>
   </header>
-  <figure class="boss" id="banner" hidden>
+  <figure class="boss" id="banner">
     <img src="/barterer.jpg" alt="The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger" />
     <figcaption class="card">
       <div class="kicker gold">Barterer</div>
@@ -45,7 +45,7 @@
     </figcaption>
   </figure>
   <section class="card">
-    <h2 class="gold">Time to the call</h2>
+    <h2 class="gold">Time to the close</h2>
     <p class="muted" id="when">—</p>
     <p class="clock" id="clock">--:--:--</p>
   </section>
@@ -87,19 +87,14 @@ function houseLine(call) {
   return held;
 }
 
-function etParts(instant) {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
-  });
-  const bag = {};
-  for (const part of fmt.formatToParts(instant)) {
-    if (part.type !== "literal") bag[part.type] = part.value;
-  }
-  let hour = Number(bag.hour);
-  if (hour === 24) hour = 0;
-  return { year: bag.year, month: bag.month, day: bag.day, hour, minute: Number(bag.minute), second: Number(bag.second) };
+function statusWords(status) {
+  if (status === "clear") return "Trades cleared tonight";
+  if (status === "no_clear") return "No trades cleared tonight";
+  return "The call is not settled";
+}
+
+function localCloseLabel(ms) {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 function nextCallAt(now) {
@@ -107,14 +102,6 @@ function nextCallAt(now) {
   const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
   if (date.getTime() <= start) return start;
   return start + 24 * 60 * 60 * 1000;
-}
-
-function callClockLabel(ms) {
-  const parts = etParts(new Date(ms));
-  const suffix = parts.hour >= 12 ? "PM" : "AM";
-  let hour = parts.hour % 12;
-  if (hour === 0) hour = 12;
-  return hour + ":" + pad(parts.minute) + " " + suffix + " ET";
 }
 
 function pad(n) { return String(n).padStart(2, "0"); }
@@ -126,7 +113,7 @@ function wholeSeconds(ms) {
 
 function paintClock() {
   const close = nextCallAt(new Date());
-  document.getElementById("when").textContent = callClockLabel(close);
+  document.getElementById("when").textContent = localCloseLabel(close);
   const total = wholeSeconds(close - Date.now());
   const h = Math.trunc(total / 3600);
   const m = Math.trunc((total % 3600) / 60);
@@ -137,8 +124,8 @@ function paintClock() {
 function paint(call) {
   document.getElementById("banner").hidden = call.mode !== "dry_run";
   document.getElementById("night").textContent = call.night;
-  document.getElementById("status").textContent = call.status;
-  document.getElementById("price").textContent = call.clearingPrice == null ? "No clear" : call.clearingPrice + " KTA per KORE";
+  document.getElementById("status").textContent = statusWords(call.status);
+  document.getElementById("price").textContent = call.clearingPrice == null ? "No clearing price tonight" : call.clearingPrice + " KTA per KORE";
   document.getElementById("kore").textContent = String(call.koreMatched);
   document.getElementById("kta").textContent = String(call.ktaMatched);
   document.getElementById("fills").textContent = String(call.fillCount);

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#12100e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-title" content="KOREMINER" />
+  <title>KOREMINER | Mine KORE on Keeta</title>
+  <meta name="description" content="KORE is a native Keeta token. 21 million supply, mint locked. Picks fall as real mainnet transfers. Payouts are open. Enter the shaft." />
+  <meta property="og:title" content="KOREMINER | Mine KORE on Keeta" />
+  <meta property="og:description" content="KORE is a native Keeta token. 21 million supply, mint locked. Picks fall as real mainnet transfers. Payouts are open. Enter the shaft." />
+  <link rel="canonical" href="https://koreminer.com/" />
+  <link rel="icon" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Silkscreen&display=swap" />
+  <link rel="stylesheet" href="/barter/site.css" />
+  <meta name="keespecs" content="e2bb2e6c282f1ecf371239403dea9000">
+</head>
+<body>
+  <main>
+    <span id="lore"></span>
+    <header class="top">
+      <div class="title-row">
+        <div>
+          <p class="kicker gold shaft-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.531 12.469 6.619 20.38a1 1 0 1 1-3-3l7.912-7.912"/><path d="M15.686 4.314A12.5 12.5 0 0 0 5.461 2.958 1 1 0 0 0 5.58 4.71a22 22 0 0 1 6.318 3.393"/><path d="M17.7 3.7a1 1 0 0 0-1.4 0l-4.6 4.6a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4z"/><path d="M19.686 8.314a12.501 12.501 0 0 1 1.356 10.225 1 1 0 0 1-1.751-.119 22 22 0 0 0-3.393-6.319"/></svg><span id="page-name">The Shaft</span></p>
+          <h1>KOREMINER</h1>
+        </div>
+        <a class="x-link" href="https://x.com/Kore_Miner" target="_blank" rel="noopener noreferrer" aria-label="KOREMINER on X">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        </a>
+      </div>
+      <div class="nav-row">
+        <nav>
+          <button class="tab on" id="tab-shaft" type="button">The Shaft</button>
+          <button class="tab" id="tab-lore" type="button">Lore</button>
+          <a class="tab" href="/barter/">Barter</a>
+          <a class="tab" href="/barter/card.html">Card</a>
+        </nav>
+        <p class="badge" id="picks">Picks live</p>
+      </div>
+    </header>
+  <figure class="boss" id="cast">
+    <img id="cast-img" src="/cheetah-miner.jpg" alt="A cheetah miner in a helmet, holding a pick" />
+    <figcaption class="card">
+      <div class="kicker gold" id="cast-name">Shift Boss</div>
+      <p class="muted" id="cast-line">Send KTA if you want KORE.</p>
+    </figcaption>
+  </figure>
+  <section class="card">
+    <h2 class="gold">Time to the close</h2>
+    <p class="muted" id="when">—</p>
+    <p class="clock" id="clock">--:--:--</p>
+  </section>
+
+    <section id="shaft">
+      <section class="card" style="margin-top:1.5rem">
+        <h2 class="gold">Shaft intake</h2>
+        <div class="lookup">
+          <p class="addr" id="intake">keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa</p>
+          <button type="button" id="copy">Copy</button>
+        </div>
+        <p class="muted">KTA sent here is fuel for picks. It is spent. It does not come back. While it lasts, it earns KORE. Whole coins are sent to the wallet that sent the fuel.</p>
+        <p class="muted">Send it from a Keeta wallet you control. Bridged from Base? KORE cannot go to a Base address. Make a keeta_ address, then <a href="/claim/">claim it here</a>.</p>
+        <p class="muted">Spent KTA goes to keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq. The private key was never created. The proof is in Lore.</p>
+        <p class="muted">KORE is keeta_apu6efya45r6rirjwyhl25djcuqg53zlepwctj7xpzvmrhfwckrzxwht4sypk. The mint is sealed. A payout is this token and no other.</p>
+      </section>
+      <details class="card how">
+        <summary><h2 class="gold">How you mine</h2></summary>
+        <div class="steps">
+          <div class="step"><span class="gold">1.</span> Use a Keeta wallet you control. Looking up an address is free and starts nothing.</div>
+          <div class="step"><span class="gold">2.</span> Send KTA to the shaft. KTA is the fuel. It is spent on picks. It does not come back.</div>
+          <div class="step"><span class="gold">3.</span> The shaft turns that fuel into packed transfers on mainnet. More fuel, more of the shift.</div>
+          <div class="step"><span class="gold">4.</span> KORE is paid to the same address that sent the KTA. The day’s ore is split by fuel, not by titles.</div>
+        </div>
+        <p class="muted">KORE is paid in whole coins. A send costs the same fuel for a fraction as for a pile, so a wallet under one coin is not paid. The fraction stays on that wallet and is paid when it makes the next coin. It is not given to anyone else. The lookup shows how far that wallet is from the next coin. It cannot name a KTA deposit, because the split changes when other fuel arrives or burns.</p>
+        <p class="muted">Copying an address lets you look at the board. It cannot spend that wallet’s KTA, and it cannot take that wallet’s KORE.</p>
+      </details>
+      <div class="split">
+        <section class="card" id="lookup">
+          <h2 class="gold">Your shaft</h2>
+          <p class="muted">Paste an address. Looking does not spend KTA.</p>
+          <div class="lookup">
+            <input id="addr" placeholder="keeta_…" autocomplete="off" spellcheck="false" />
+            <button type="button" id="look">Look</button>
+          </div>
+          <div class="stat3">
+            <div><span>Depth</span><b id="depth">0</b></div>
+            <div><span>KORE</span><b id="counted">0</b></div>
+            <div><span>Streak</span><b id="streak">0</b></div>
+          </div>
+          <div class="stats" id="stats">
+            <div><span>Fuel in the shaft</span><b id="fuel">0</b></div>
+            <div><span>Share now</span><b id="share">0</b></div>
+            <div><span>KORE waiting</span><b id="waiting">0</b></div>
+            <div><span>KORE paid</span><b id="paid">0</b></div>
+          </div>
+          <p class="muted" id="who">The wallet's own KORE balance can be higher. This is only the shaft's count.</p>
+        </section>
+      </div>
+      <section class="card" style="margin-top:1rem">
+        <h2 class="gold">Bridged from Base?</h2>
+        <p class="muted">This board is for Keeta wallets. If you sent KTA from a Keeta wallet, you are already on it. Do not claim.</p>
+        <p class="muted">If you bridged KTA from Base straight to the shaft, that KORE is not on this board and it cannot go back to Base. You need a Keeta wallet first.</p>
+        <p><a class="base-claim" href="/claim/">Base bridge claim</a></p>
+      </section>
+      <section class="card" style="margin-top:1rem">
+        <h2 class="gold">KORE board</h2>
+        <div id="board"><p class="muted">No KORE counted yet.</p></div>
+      </section>
+      <section class="card">
+        <h2 class="gold">Next halving</h2>
+        <p class="gold" id="halving">Next halving</p>
+        <p class="muted" id="clock-note"></p>
+      </section>
+    </section>
+    <section id="lore-panel" hidden>
+      <div class="grid">
+        <section class="card"><h2 class="gold">The cut</h2><p class="muted">Other chains asked a store of value to wait. Bitcoin showed that twenty-one million could be enough, if nobody could strike coin twenty-one million and one. Keeta cut a different tunnel. A token here is native. Transfers settle at the speed of Keeta, and one block can carry a whole crew of them. The picks are not a picture of work. They are the work.</p></section>
+        <section class="card"><h2 class="gold">What KORE is</h2><p class="muted">KORE is the ore. Twenty-one million pieces, native on Keeta, cut to the same idea as Bitcoin’s store of value: a hard cap, a halving clock, and no committee that can add more. It is not wrapped Bitcoin. It can move as fast as Keeta moves.</p></section>
+        <section class="card"><h2 class="gold">The seal</h2><p class="muted">The whole supply was struck once. Then the mint was sealed. The only key that could make more KORE was thrown down a hole with no bottom. Twenty-one million. Then none.</p></section>
+        <section class="card"><h2 class="gold">What the miner does</h2><p class="muted">A pick is a real transfer on Keeta mainnet. The shaft packs many picks into one block. Miners bring KTA. The shaft spends it as picks. KORE is the pay, when the vein opens.</p></section>
+        <section class="card"><h2 class="gold">The vein</h2><p class="muted">The supply is mined across four years, from 10 October 2026 until the vein is empty in 2030. Each year the cut is half of the year before. Same shape as Bitcoin’s halvings. A shorter tunnel.</p><table><thead><tr><th>Shift</th><th>Years</th><th>KORE in the vein</th></tr></thead><tbody><tr><td class="gold">Year one</td><td>2026–2027</td><td>11,200,000</td></tr><tr><td class="gold">Year two</td><td>2027–2028</td><td>5,600,000</td></tr><tr><td class="gold">Year three</td><td>2028–2029</td><td>2,800,000</td></tr><tr><td class="gold">Year four</td><td>2029–2030</td><td>1,400,000</td></tr></tbody></table><p class="muted">Each day the shaft cuts a slice of that year’s supply and splits it across the miners who sent fuel. When the fourth year ends, the picks can continue, but no new KORE is struck. The coins already paid can still move.</p></section>
+        <section class="card"><h2 class="gold">Trust</h2><p class="muted">Pick dust goes to</p><p class="dust">keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq</p><p class="muted">This address is made from the sentence “KOREMINER dust sink. The private key was never created. v1”. SHA-256 of that sentence plus one zero byte, with 02 in front, is the public key. No private key was created. Anyone can repeat those steps and get this same address. KTA that arrives here leaves circulation. The cap does not change.</p><p class="muted">KORE is 21,000,000. The mint key was thrown away. No more can be struck.</p></section>
+        <section class="card"><h2 class="gold">How you mine</h2><div class="steps"><div class="step"><span class="gold">1.</span> Use a Keeta wallet you control. Looking up an address is free and starts nothing.</div><div class="step"><span class="gold">2.</span> Send KTA to the shaft. KTA is the fuel. It is spent on picks. It does not come back.</div><div class="step"><span class="gold">3.</span> The shaft turns that fuel into packed transfers on mainnet. More fuel, more of the shift.</div><div class="step"><span class="gold">4.</span> KORE is paid to the same address that sent the KTA. The day’s ore is split by fuel, not by titles.</div></div><p class="muted">KORE is paid in whole coins. A send costs the same fuel for a fraction as for a pile, so a wallet under one coin is not paid. The fraction stays on that wallet and is paid when it makes the next coin. It is not given to anyone else. The lookup shows how far that wallet is from the next coin. It cannot name a KTA deposit, because the split changes when other fuel arrives or burns.</p>
+        <p class="muted">Copying an address lets you look at the board. It cannot spend that wallet’s KTA, and it cannot take that wallet’s KORE.</p></section>
+      </div>
+    </section>
+  </main>
+  <script src="/barter/picks.js"></script>
+  <script>
+    const OPEN = Date.parse("2026-10-10T00:00:00Z");
+    let sending = false;
+    const shaft = document.getElementById("shaft");
+    const lore = document.getElementById("lore-panel");
+    const tabShaft = document.getElementById("tab-shaft");
+    const tabLore = document.getElementById("tab-lore");
+    function show(which) {
+      const loreOn = which === "lore";
+      shaft.hidden = loreOn;
+      lore.hidden = !loreOn;
+      tabShaft.className = loreOn ? "tab" : "tab on";
+      tabLore.className = loreOn ? "tab on" : "tab";
+      document.getElementById("page-name").textContent = loreOn ? "Lore" : "The Shaft";
+      const castImg = document.getElementById("cast-img");
+      castImg.src = loreOn ? "/storyteller.jpg" : "/cheetah-miner.jpg";
+      castImg.alt = loreOn ? "The Narrator, an old cheetah reading a glowing book" : "A cheetah miner in a helmet, holding a pick";
+      document.getElementById("cast-name").textContent = loreOn ? "Narrator" : "Shift Boss";
+      document.getElementById("cast-line").textContent = loreOn ? "Nothing on four legs is faster. The shaft would not keep the old slow clock." : "Send KTA if you want KORE.";
+      const title = loreOn ? "KOREMINER | Lore" : "KOREMINER | Mine KORE on Keeta";
+      const desc = loreOn
+        ? "The Narrator tells how 21 million KORE were struck once on Keeta, the mint was sealed, and the shaft was opened to anyone with a pick."
+        : "KORE is a native Keeta token. 21 million supply, mint locked. Picks fall as real mainnet transfers. Payouts are open. Enter the shaft.";
+      document.title = title;
+      const meta = document.querySelector('meta[name="description"]');
+      if (meta) meta.setAttribute("content", desc);
+      const ogt = document.querySelector('meta[property="og:title"]');
+      const ogd = document.querySelector('meta[property="og:description"]');
+      if (ogt) ogt.setAttribute("content", title);
+      if (ogd) ogd.setAttribute("content", desc);
+      window.scrollTo(0, 0);
+    }
+    tabShaft.addEventListener("click", () => show("shaft"));
+    tabLore.addEventListener("click", () => show("lore"));
+    if (location.hash === "#lore" || new URLSearchParams(location.search).get("view") === "lore") show("lore");
+    const HALVINGS = [Date.parse("2027-10-10T00:00:00Z"), Date.parse("2028-10-10T00:00:00Z"), Date.parse("2029-10-10T00:00:00Z")];
+    const VEIN_END = Date.parse("2030-10-10T00:00:00Z");
+    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    function stamp(ms) {
+      const date = new Date(ms);
+      return date.getUTCDate() + " " + MONTHS[date.getUTCMonth()] + " " + date.getUTCFullYear() + " · 00:00 UTC";
+    }
+    function halvingLine(now) {
+      const next = HALVINGS.find((at) => at > now);
+      if (next) return "Next halving · " + stamp(next);
+      if (now < VEIN_END) return "Vein closes · " + stamp(VEIN_END);
+      return "The vein is empty.";
+    }
+    function pad(n) { return String(n).padStart(2, "0"); }
+    function tick() {
+      const now = Date.now();
+      const open = now >= OPEN;
+      const target = (Math.floor(now / 86400000) + 1) * 86400000;
+      let left = Math.max(0, target - now);
+      const hours = Math.floor(left / 3600000);
+      left -= hours * 3600000;
+      const mins = Math.floor(left / 60000);
+      const secs = Math.floor((left - mins * 60000) / 1000);
+      const pays = open && sending;
+      document.getElementById("when").textContent = new Date(target).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      document.getElementById("clock").textContent = pad(hours) + ":" + pad(mins) + ":" + pad(secs);
+      document.getElementById("halving").textContent = halvingLine(now);
+      document.getElementById("clock-note").textContent = pays
+        ? "This day's share is sent at midnight UTC. The clock then starts the next day."
+        : open
+          ? "The day's share closes at midnight UTC. Sending is still off, so this close is counted, not paid."
+          : "The day closes at midnight UTC. The first close that counts KORE is 10 Oct. Nothing is sent before then.";
+    }
+    tick();
+    setInterval(tick, 1000);
+    function paint(id, value) {
+      const node = document.getElementById(id);
+      if (node) node.textContent = value;
+    }
+    async function loadBook() {
+      const response = await fetch("/lookup.json?t=" + Date.now());
+      if (!response.ok) throw new Error("missing");
+      return response.json();
+    }
+    const names = new Map();
+    function shortAddress(addr) {
+      if (typeof addr !== "string" || addr.length < 20) return addr || "";
+      return addr.slice(0, 13) + "…" + addr.slice(-6);
+    }
+    function paintBoard(book) {
+      const rows = book.board || [];
+      sending = book.send === true;
+      const board = document.getElementById("board");
+      board.replaceChildren();
+      if (!rows.length) {
+        const note = document.createElement("p");
+        note.className = "muted";
+        note.textContent = "No KORE counted yet.";
+        board.appendChild(note);
+        return;
+      }
+      const table = document.createElement("table");
+      const head = document.createElement("tr");
+      for (const label of ["#", "Miner", "KORE counted"]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        head.appendChild(cell);
+      }
+      const thead = document.createElement("thead");
+      thead.appendChild(head);
+      const body = document.createElement("tbody");
+      rows.forEach((item, index) => {
+        const row = document.createElement("tr");
+        const rank = document.createElement("td");
+        rank.textContent = String(index + 1);
+        const from = document.createElement("td");
+        from.className = "addr";
+        const addr = item.from;
+        from.textContent = shortAddress(addr);
+        from.title = addr;
+        const counted = document.createElement("td");
+        counted.textContent = item.counted;
+        row.append(rank, from, counted);
+        body.appendChild(row);
+        if (typeof addr !== "string" || !addr.startsWith("keeta_")) return;
+        if (names.has(addr)) {
+          if (names.get(addr)) from.textContent = names.get(addr);
+          return;
+        }
+        fetch("https://keespecs.xyz/api/username?account=" + encodeURIComponent(addr))
+          .then((response) => (response.ok ? response.json() : null))
+          .then((data) => {
+            const name = data
+              && data.found === true
+              && data.verified === true
+              && data.account === addr
+              && typeof data.username === "string"
+              && /^[a-z0-9_]{2,24}$/.test(data.username)
+              ? data.username
+              : "";
+            names.set(addr, name);
+            if (name && from.isConnected) from.textContent = name;
+          })
+          .catch(() => { names.set(addr, ""); });
+      });
+      table.append(thead, body);
+      board.appendChild(table);
+    }
+    async function lookUp() {
+      const addr = document.getElementById("addr").value.trim();
+      const who = document.getElementById("who");
+      if (!addr.startsWith("keeta_")) {
+        who.textContent = "That is not a keeta_ address.";
+        return;
+      }
+      let book;
+      try { book = await loadBook(); }
+      catch { who.textContent = "The books are not on the site yet."; return; }
+      const row = (book.miners || {})[addr];
+      paint("fuel", row ? row.fuel + " KTA" : "0.00000 KTA");
+      paint("share", row ? row.share : "0.0000");
+      paint("depth", row ? row.depth + " KTA" : "0.00000 KTA");
+      paint("streak", row ? String(row.streak) : "0");
+      paint("counted", row ? row.counted : "0.000000");
+      paint("waiting", row ? row.waiting : "0");
+      paint("paid", row ? row.paid : "0");
+      function shortOfNext(counted) {
+        const frac = String(counted).split(".")[1] || "";
+        const digits = (frac + "000000").slice(0, 6);
+        if (digits === "000000") return "1.000000";
+        return "0." + String(1000000 - Number(digits)).padStart(6, "0");
+      }
+      who.textContent = row
+        ? "Counted is the running share. This wallet is " + shortOfNext(row.counted) + " KORE short of the next whole coin. That is not a KTA price. Waiting is the whole coins not sent yet. Paid is what the shaft has sent."
+        : "No fuel counted for this address yet. The wallet's own KORE can still be higher.";
+      paintBoard(book);
+    }
+    document.getElementById("look").addEventListener("click", lookUp);
+    document.getElementById("addr").addEventListener("keydown", (event) => { if (event.key === "Enter") lookUp(); });
+    document.getElementById("copy").addEventListener("click", async () => {
+      const button = document.getElementById("copy");
+      try {
+        await navigator.clipboard.writeText(document.getElementById("intake").textContent.trim());
+        button.textContent = "Copied";
+      } catch { button.textContent = "Failed"; }
+      setTimeout(() => { button.textContent = "Copy"; }, 1200);
+    });
+    async function refreshBoard() {
+      try { paintBoard(await loadBook()); } catch { /* leave the empty line */ }
+    }
+    refreshBoard();
+    setInterval(refreshBoard, 20000);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+  </script>
+</body>
+</html>

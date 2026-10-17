@@ -213,6 +213,16 @@ test("the public card text has no full address and the page stays read only", ()
   assert.equal(page.includes('class="boss"'), true);
   assert.equal(home.includes(">Barter<"), true);
   assert.equal(page.includes(">Card<"), true);
+  assert.equal(home.includes("Time to the close"), true);
+  assert.equal(page.includes("Time to the close"), true);
+  assert.equal(home.includes("Time to the call"), false);
+  assert.equal(home.includes("No trades cleared tonight"), true);
+  const site = readFileSync(`${ROOT}public/index.html`, "utf8");
+  assert.equal(site.includes('href="/barter/site.css"'), true);
+  assert.equal(site.includes('src="/barter/picks.js"'), true);
+  assert.equal(site.includes('id="page-name"'), true);
+  assert.equal(site.includes("Time to the close"), true);
+  assert.equal(site.split('id="clock"').length, 2);
   const picks = readFileSync(`${ROOT}public/barter/picks.js`, "utf8");
   assert.equal(home.includes('src="picks.js"'), true);
   assert.equal(page.includes('src="picks.js"'), true);
