@@ -67,9 +67,9 @@
     <div class="nav-row">
       <nav>
         <a class="tab" href="/">The Shaft</a>
-        <a class="tab" href="/#lore">Lore</a>
         <a class="tab" href="/barter/">Barter</a>
         <a class="tab on" href="/barter/card.html" aria-current="page">Card</a>
+        <a class="tab" href="/#lore">Lore</a>
       </nav>
       <p class="badge" id="picks">Picks live</p>
     </div>
@@ -82,11 +82,6 @@
       <p class="muted" id="portrait-line">The miner with the pick. Keep the streak warm tonight.</p>
     </figcaption>
   </figure>
-  <section class="card">
-    <h2 class="gold">Time to the close</h2>
-    <p class="muted" id="when">—</p>
-    <p class="clock" id="clock">--:--:--</p>
-  </section>
   <div id="ready">
     <section class="card">
       <h2 class="gold">Find a wallet</h2>
@@ -143,9 +138,7 @@
 import {
   STORAGE_KEY,
   WARMING,
-  clockText,
   leaderboard,
-  nextClose,
   readPlayer,
   shortWallet,
   summary,
@@ -176,16 +169,6 @@ let ladder = null;
 let lookupOk = false;
 let held = "";
 let showAll = false;
-
-function localCloseLabel(ms) {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
-
-function paintClock() {
-  const close = nextClose(new Date());
-  document.getElementById("when").textContent = localCloseLabel(close);
-  document.getElementById("clock").textContent = clockText(close - Date.now());
-}
 
 function portraitFor(rank) {
   if (rank === "Barterer") {
@@ -345,9 +328,6 @@ document.getElementById("more").addEventListener("click", () => {
 box.addEventListener("keydown", (event) => {
   if (event.key === "Enter") show(box.value.trim());
 });
-
-paintClock();
-setInterval(paintClock, 1000);
 
 try { held = localStorage.getItem(STORAGE_KEY) || ""; } catch { held = ""; }
 
