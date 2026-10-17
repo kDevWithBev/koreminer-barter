@@ -76,8 +76,12 @@
   <figure class="boss" id="face">
     <img id="portrait" src="/cheetah-miner.jpg" alt="A cheetah miner in a helmet, holding a pick" />
     <figcaption class="card">
-      <div class="kicker gold" id="portrait-name">Shift Boss</div>
+      <div class="name-row">
+        <div class="kicker gold" id="portrait-name">Miner</div>
+        <span class="rank-badge" id="portrait-badge" hidden></span>
+      </div>
       <p class="muted" id="portrait-line">The miner with the pick. Keep the streak warm tonight.</p>
+      <p class="muted next-rank" id="portrait-next" hidden></p>
     </figcaption>
   </figure>
   <div id="ready">
@@ -138,6 +142,7 @@ import {
   WARMING,
   leaderboard,
   readPlayer,
+  rankStory,
   shortWallet,
   summary,
   updatedLabel,
@@ -168,17 +173,20 @@ let lookupOk = false;
 let held = "";
 let showAll = false;
 
-function portraitFor(rank) {
-  if (rank === "Barterer") {
-    return ["/barterer.jpg", "The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger", "Barterer", "Eighty-four days mined. Barterers get the practice call first."];
-  }
-  if (rank === "Narrator Book") {
-    return ["/storyteller.jpg", "The Narrator, an old cheetah reading a glowing book", "Narrator", "Fifty-six days in the ledger. Your story is written down."];
-  }
-  if (rank === "Shift Boss Shield") {
-    return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick", "Shift Boss", "Twenty-eight days down. The shield covers one missed shift."];
-  }
-  return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick", "Shift Boss", "The miner with the pick. Keep the streak warm tonight."];
+function applyStory(days, showNext) {
+  const story = rankStory(days);
+  const portrait = document.getElementById("portrait");
+  portrait.src = story.portrait;
+  portrait.alt = story.alt;
+  document.getElementById("portrait-name").textContent = story.title;
+  document.getElementById("portrait-line").textContent = story.caption;
+  const badge = document.getElementById("portrait-badge");
+  badge.hidden = !story.badge;
+  badge.textContent = story.badge;
+  const next = document.getElementById("portrait-next");
+  next.hidden = !(showNext && story.next);
+  next.textContent = story.next;
+  return story;
 }
 
 function markClimb(rank, loaded) {
@@ -199,27 +207,19 @@ function paintPlayer(view) {
   box.value = view.show || "";
   const miss = document.getElementById("miss");
   const body = document.getElementById("body");
-  const portrait = document.getElementById("portrait");
   if (!view.ok) {
     body.hidden = true;
     miss.hidden = false;
     miss.textContent = view.text;
-    const idle = portraitFor("");
-    portrait.src = idle[0];
-    portrait.alt = idle[1];
-    document.getElementById("portrait-name").textContent = idle[2];
-    document.getElementById("portrait-line").textContent = idle[3];
+    applyStory(0, false);
     markClimb(null, false);
     paintLeaders();
     return;
   }
   miss.hidden = true;
   body.hidden = false;
-  const art = portraitFor(view.rank);
-  portrait.src = art[0];
-  portrait.alt = art[1];
-  document.getElementById("portrait-name").textContent = art[2];
-  document.getElementById("portrait-line").textContent = art[3];
+  const days = view.ladderStreak == null ? 0 : view.ladderStreak;
+  const story = applyStory(days, true);
   document.getElementById("who").textContent = view.show || "";
   const streak = view.ladderStreak == null ? view.miningStreak : view.ladderStreak;
   document.getElementById("streak-big").textContent = String(streak);
@@ -227,7 +227,7 @@ function paintPlayer(view) {
   document.getElementById("fuel").textContent = view.lines.fuel.replace(/^Fuel /, "");
   document.getElementById("mining").textContent = String(view.miningStreak);
   document.getElementById("ladder").textContent = view.lines.ladder;
-  document.getElementById("rank").textContent = view.kind === "no-ladder" ? "No ladder record yet." : (view.rank || "No rank yet");
+  document.getElementById("rank").textContent = view.kind === "no-ladder" ? "No ladder record yet." : story.title;
   document.getElementById("paid").textContent = view.lines.paid.replace(/ paid$/, "");
   document.getElementById("waiting").textContent = view.lines.waiting.replace(/ waiting$/, "");
   document.getElementById("buyers").textContent = view.buyerNights == null ? view.lines.buyers : String(view.buyerNights);

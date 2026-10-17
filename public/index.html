@@ -63,10 +63,9 @@
           <p class="addr" id="intake">keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa</p>
           <button type="button" id="copy">Copy</button>
         </div>
-        <p class="muted">KTA sent here is fuel for picks. It is spent. It does not come back. While it lasts, it earns KORE. Whole coins are sent to the wallet that sent the fuel.</p>
-        <p class="muted">Send it from a Keeta wallet you control. Bridged from Base? KORE cannot go to a Base address. Make a keeta_ address, then <a href="/claim/">claim it here</a>.</p>
         <p class="muted">Spent KTA goes to keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq. The private key was never created. The proof is in Lore.</p>
         <p class="muted">KORE is keeta_apu6efya45r6rirjwyhl25djcuqg53zlepwctj7xpzvmrhfwckrzxwht4sypk. The mint is sealed. A payout is this token and no other.</p>
+        <p><a href="/claim/">Coming from outside Keeta?</a></p>
       </section>
       <details class="card how">
         <summary><h2 class="gold">How you mine</h2></summary>
@@ -79,7 +78,6 @@
         <p class="muted">KORE is paid in whole coins. A send costs the same fuel for a fraction as for a pile, so a wallet under one coin is not paid. The fraction stays on that wallet and is paid when it makes the next coin. It is not given to anyone else. The lookup shows how far that wallet is from the next coin. It cannot name a KTA deposit, because the split changes when other fuel arrives or burns.</p>
         <p class="muted">Copying an address lets you look at the board. It cannot spend that wallet’s KTA, and it cannot take that wallet’s KORE.</p>
       </details>
-      <div class="split">
         <section class="card" id="lookup">
           <h2 class="gold">Your shaft</h2>
           <p class="muted">Paste an address. Looking does not spend KTA.</p>
@@ -100,13 +98,6 @@
           </div>
           <p class="muted" id="who">The wallet's own KORE balance can be higher. This is only the shaft's count.</p>
         </section>
-      </div>
-      <section class="card" style="margin-top:1rem">
-        <h2 class="gold">Bridged from Base?</h2>
-        <p class="muted">This board is for Keeta wallets. If you sent KTA from a Keeta wallet, you are already on it. Do not claim.</p>
-        <p class="muted">If you bridged KTA from Base straight to the shaft, that KORE is not on this board and it cannot go back to Base. You need a Keeta wallet first.</p>
-        <p><a class="base-claim" href="/claim/">Base bridge claim</a></p>
-      </section>
       <section class="card" style="margin-top:1rem">
         <h2 class="gold">KORE board</h2>
         <div id="board"><p class="muted">No KORE counted yet.</p></div>
@@ -136,6 +127,11 @@
       return "The vein is empty.";
     }
     function pad(n) { return String(n).padStart(2, "0"); }
+    function wholeKore(value) {
+      const n = Number(String(value ?? "").replace(/,/g, ""));
+      if (!Number.isFinite(n) || n <= 0) return "0";
+      return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
     function tick() {
       const now = Date.now();
       const open = now >= OPEN;
@@ -203,7 +199,7 @@
         from.textContent = shortAddress(addr);
         from.title = addr;
         const counted = document.createElement("td");
-        counted.textContent = item.counted;
+        counted.textContent = wholeKore(item.counted);
         row.append(rank, from, counted);
         body.appendChild(row);
         if (typeof addr !== "string" || !addr.startsWith("keeta_")) return;
@@ -245,9 +241,9 @@
       paint("share", row ? row.share : "0.0000");
       paint("depth", row ? row.depth + " KTA" : "0.00000 KTA");
       paint("streak", row ? String(row.streak) : "0");
-      paint("counted", row ? row.counted : "0.000000");
-      paint("waiting", row ? row.waiting : "0");
-      paint("paid", row ? row.paid : "0");
+      paint("counted", row ? wholeKore(row.counted) : "0");
+      paint("waiting", row ? wholeKore(row.waiting) : "0");
+      paint("paid", row ? wholeKore(row.paid) : "0");
       function shortOfNext(counted) {
         const frac = String(counted).split(".")[1] || "";
         const digits = (frac + "000000").slice(0, 6);

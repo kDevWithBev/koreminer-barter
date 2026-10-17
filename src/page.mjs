@@ -13,7 +13,7 @@ export function streakLines(row) {
 
 export function houseLine(call, live = BARTER_LIVE) {
   const practice = live !== true || call?.mode === "dry_run";
-  if (practice) return call?.houseKore === 0 ? "House is buying only tonight." : "";
+  if (practice) return call?.houseKore === 0 ? "Practice: the house would be buying tonight." : "";
   const held = `House holds ${call.houseKta} KTA and ${call.houseKore} KORE.`;
   if (call.houseKore === 0) return `${held} House is buying only tonight.`;
   return held;

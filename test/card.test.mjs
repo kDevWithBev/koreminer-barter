@@ -15,9 +15,11 @@ import {
   nextClose,
   publicText,
   readPlayer,
+  rankStory,
   shortWallet,
   summary,
   updatedLabel,
+  withCommas,
 } from "../src/card.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -116,6 +118,53 @@ test("missing upgrades say they are coming, and a list shows the names", () => {
   lookup.miners[known].upgrades = [];
   const empty = readPlayer({ wallet: known, lookup, ladder: ranks() });
   assert.equal(empty.lines.upgrades, "No upgrades owned.");
+});
+
+test("the card story follows the ladder streak at each rank boundary", () => {
+  const at = (days) => rankStory(days);
+  assert.equal(at(0).title, "Miner");
+  assert.equal(at(0).badge, "");
+  assert.equal(at(0).portrait, "/cheetah-miner.jpg");
+  assert.equal(at(0).caption, "The miner with the pick. Keep the streak warm tonight.");
+  assert.equal(at(0).next, "Next rank in 14 days");
+  assert.equal(at(13).title, "Miner");
+  assert.equal(at(13).badge, "");
+  assert.equal(at(13).next, "Next rank in 1 day");
+  assert.equal(at(14).title, "Miner");
+  assert.equal(at(14).badge, "Practice Shield");
+  assert.equal(at(14).portrait, at(13).portrait);
+  assert.equal(at(14).caption, at(13).caption);
+  assert.equal(at(14).next, "Next rank in 14 days");
+  assert.equal(at(27).title, "Miner");
+  assert.equal(at(27).badge, "Practice Shield");
+  assert.equal(at(27).next, "Next rank in 1 day");
+  assert.equal(at(28).title, "Shift Boss");
+  assert.equal(at(28).badge, "Shift Boss Shield");
+  assert.equal(at(28).caption, "Twenty-eight days down. The shield covers one missed shift.");
+  assert.equal(at(28).next, "Next rank in 28 days");
+  assert.equal(at(55).title, "Shift Boss");
+  assert.equal(at(55).badge, "Shift Boss Shield");
+  assert.equal(at(55).next, "Next rank in 1 day");
+  assert.equal(at(56).title, "Narrator");
+  assert.equal(at(56).badge, "");
+  assert.equal(at(56).portrait, "/storyteller.jpg");
+  assert.equal(at(56).caption, "Fifty-six days in the ledger. Your story is written down.");
+  assert.equal(at(56).next, "Next rank in 28 days");
+  assert.equal(at(83).title, "Narrator");
+  assert.equal(at(83).next, "Next rank in 1 day");
+  assert.equal(at(84).title, "Barterer");
+  assert.equal(at(84).badge, "");
+  assert.equal(at(84).portrait, "/barterer.jpg");
+  assert.equal(at(84).caption, "Eighty-four days mined. Barterers get the practice call first.");
+  assert.equal(at(84).next, "");
+  assert.equal(at(13).title === "Shift Boss", false);
+  assert.equal(at(27).portrait.includes("barterer"), false);
+});
+
+test("KORE amounts show as whole coins rounded down", () => {
+  assert.equal(withCommas(69711.237263), "69,711");
+  assert.equal(withCommas("183,468"), "183,468");
+  assert.equal(withCommas("0.237263"), "0");
 });
 
 test("the board sorts by streak, breaks ties by KORE paid, and keeps 25", () => {
@@ -228,6 +277,9 @@ test("the public card text has no full address and the page stays read only", ()
   assert.equal(site.includes('"#lore"'), true);
   assert.equal(site.includes('get("view") === "lore"'), true);
   assert.equal(site.includes('id="lore-panel"'), false);
+  assert.equal(site.includes("Coming from outside Keeta?"), true);
+  assert.equal(site.includes("Bridged from Base?"), false);
+  assert.equal(site.includes("function wholeKore"), true);
   const lore = readFileSync(`${ROOT}public/lore/index.html`, "utf8");
   assert.equal(lore.includes('href="/barter/site.css"'), true);
   assert.equal(lore.includes('src="/barter/picks.js"'), true);

@@ -428,13 +428,14 @@ test("a wallet shows ten characters, then four", () => {
 
 test("the house line says it is buying only when it holds no KORE", () => {
   const buying = houseLine({ mode: "dry_run", houseKta: 100.000054, houseKore: 0 });
-  assert.equal(buying, "House is buying only tonight.");
+  assert.equal(buying, "Practice: the house would be buying tonight.");
   assert.equal(buying.includes("100.000054"), false);
   const both = houseLine({ houseKta: 10, houseKore: 4 }, true);
   assert.equal(both, "House holds 10 KTA and 4 KORE.");
   assert.equal(both.includes("buying only"), false);
   const page = readFileSync(join(ROOT, "public/barter/index.html"), "utf8");
   assert.equal(page.includes("House is buying only tonight."), true);
+  assert.equal(page.includes("Practice: the house would be buying tonight."), true);
   assert.equal(page.includes("Practice call only, no coins move. Learn the ledger first."), true);
   assert.equal(/<form/i.test(page), false);
   assert.equal(/\bBase\b/.test(page), false);

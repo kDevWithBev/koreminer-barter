@@ -79,7 +79,7 @@
 </main>
 <script>
 function houseLine(call) {
-  if (call.mode === "dry_run") return call.houseKore === 0 ? "House is buying only tonight." : "";
+  if (call.mode === "dry_run") return call.houseKore === 0 ? "Practice: the house would be buying tonight." : "";
   const held = "House holds " + call.houseKta + " KTA and " + call.houseKore + " KORE.";
   if (call.houseKore === 0) return held + " House is buying only tonight.";
   return held;
@@ -104,6 +104,12 @@ function nextCallAt(now) {
 
 function pad(n) { return String(n).padStart(2, "0"); }
 
+function wholeKore(value) {
+  const n = Number(String(value ?? "").replace(/,/g, ""));
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  return String(Math.trunc(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 function wholeSeconds(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return 0;
   return Math.trunc(ms / 1000);
@@ -124,7 +130,7 @@ function paint(call) {
   document.getElementById("night").textContent = call.night;
   document.getElementById("status").textContent = statusWords(call.status);
   document.getElementById("price").textContent = call.clearingPrice == null ? "No clearing price tonight" : call.clearingPrice + " KTA per KORE";
-  document.getElementById("kore").textContent = String(call.koreMatched);
+  document.getElementById("kore").textContent = wholeKore(call.koreMatched);
   document.getElementById("kta").textContent = String(call.ktaMatched);
   document.getElementById("fills").textContent = String(call.fillCount);
   document.getElementById("house").textContent = houseLine(call);
@@ -138,7 +144,7 @@ function paint(call) {
     const wallet = document.createElement("b");
     wallet.textContent = String(fill.wallet);
     const trade = document.createElement("span");
-    trade.textContent = fill.side + " · " + fill.amount + " KORE";
+    trade.textContent = fill.side + " · " + wholeKore(fill.amount) + " KORE";
     const fee = document.createElement("span");
     fee.textContent = "Fee " + fill.fee + " KTA · " + (fill.confirmed ? "confirmed" : "not confirmed");
     li.append(wallet, trade, fee);

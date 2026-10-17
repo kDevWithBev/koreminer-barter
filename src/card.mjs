@@ -16,6 +16,7 @@ export {
   nextClose,
   normalizeWallet,
   publicText,
+  rankStory,
   readPlayer,
   rungLines,
   shortWallet,

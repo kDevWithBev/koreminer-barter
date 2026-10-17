@@ -38,6 +38,55 @@ export function withCommas(value) {
   return String(wholeCoins(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+export function rankStory(streak) {
+  const days = Number(streak) || 0;
+  const next = (at) => {
+    const left = at - days;
+    return `Next rank in ${left} ${left === 1 ? "day" : "days"}`;
+  };
+  const miner = {
+    title: "Miner",
+    badge: "",
+    portrait: "/cheetah-miner.jpg",
+    alt: "A cheetah miner in a helmet, holding a pick",
+    caption: "The miner with the pick. Keep the streak warm tonight.",
+  };
+  if (days >= 84) {
+    return {
+      title: "Barterer",
+      badge: "",
+      portrait: "/barterer.jpg",
+      alt: "The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger",
+      caption: "Eighty-four days mined. Barterers get the practice call first.",
+      next: "",
+    };
+  }
+  if (days >= 56) {
+    return {
+      title: "Narrator",
+      badge: "",
+      portrait: "/storyteller.jpg",
+      alt: "The Narrator, an old cheetah reading a glowing book",
+      caption: "Fifty-six days in the ledger. Your story is written down.",
+      next: next(84),
+    };
+  }
+  if (days >= 28) {
+    return {
+      title: "Shift Boss",
+      badge: "Shift Boss Shield",
+      portrait: "/cheetah-miner.jpg",
+      alt: "A cheetah miner in a helmet, holding a pick",
+      caption: "Twenty-eight days down. The shield covers one missed shift.",
+      next: next(56),
+    };
+  }
+  if (days >= 14) {
+    return { ...miner, badge: "Practice Shield", next: next(28) };
+  }
+  return { ...miner, next: next(14) };
+}
+
 export function median(values) {
   const nums = values.filter((value) => Number.isFinite(value)).slice().sort((a, b) => a - b);
   if (!nums.length) return null;

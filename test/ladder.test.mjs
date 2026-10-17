@@ -142,11 +142,12 @@ test("the buyer board keeps fueled miners only, and fifty buyer-only wallets tak
 
 test("practice mode hides the house balance", () => {
   const buying = houseLine({ mode: "dry_run", houseKta: 100.000054, houseKore: 0 });
-  assert.equal(buying, "House is buying only tonight.");
+  assert.equal(buying, "Practice: the house would be buying tonight.");
   assert.equal(buying.includes("100.000054"), false);
   assert.equal(houseLine({ mode: "dry_run", houseKta: 100, houseKore: 4 }), "");
   const page = readFileSync(join(ROOT, "public/barter/index.html"), "utf8");
   assert.equal(page.includes("House is buying only tonight."), true);
+  assert.equal(page.includes("Practice: the house would be buying tonight."), true);
   assert.equal(page.includes("Barterers trade cheaper at the call."), true);
   assert.equal(page.includes("Perks may change."), true);
   assert.equal(page.includes("Mining streak "), true);
