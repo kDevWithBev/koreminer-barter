@@ -81,7 +81,6 @@
         <span class="rank-badge" id="portrait-badge" hidden></span>
       </div>
       <p class="muted" id="portrait-line">The miner with the pick. Keep the streak warm tonight.</p>
-      <p class="muted next-rank" id="portrait-next" hidden></p>
     </figcaption>
   </figure>
   <div id="ready">
@@ -173,7 +172,7 @@ let lookupOk = false;
 let held = "";
 let showAll = false;
 
-function applyStory(days, showNext) {
+function applyStory(days) {
   const story = rankStory(days);
   const portrait = document.getElementById("portrait");
   portrait.src = story.portrait;
@@ -183,9 +182,6 @@ function applyStory(days, showNext) {
   const badge = document.getElementById("portrait-badge");
   badge.hidden = !story.badge;
   badge.textContent = story.badge;
-  const next = document.getElementById("portrait-next");
-  next.hidden = !(showNext && story.next);
-  next.textContent = story.next;
   return story;
 }
 
@@ -211,7 +207,7 @@ function paintPlayer(view) {
     body.hidden = true;
     miss.hidden = false;
     miss.textContent = view.text;
-    applyStory(0, false);
+    applyStory(0);
     markClimb(null, false);
     paintLeaders();
     return;
@@ -219,7 +215,7 @@ function paintPlayer(view) {
   miss.hidden = true;
   body.hidden = false;
   const days = view.ladderStreak == null ? 0 : view.ladderStreak;
-  const story = applyStory(days, true);
+  const story = applyStory(days);
   document.getElementById("who").textContent = view.show || "";
   const streak = view.ladderStreak == null ? view.miningStreak : view.ladderStreak;
   document.getElementById("streak-big").textContent = String(streak);
