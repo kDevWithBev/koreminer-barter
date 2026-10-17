@@ -4,55 +4,29 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#12100e" />
-  <title>KOREMINER | Your card</title>
+  <title>KOREMINER | Card</title>
   <link rel="icon" href="/icon-192.png" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=Silkscreen&display=swap" />
+  <link rel="stylesheet" href="site.css" />
   <style>
-    :root { --bg:#12100e; --surface:#1c1916; --inset:#141210; --fg:#f3ead7; --muted:#b4a894; --gold:#e2b34a; --ink:#1a140c; --line:#3a342c; }
-    * { box-sizing:border-box; }
-    html { -webkit-text-size-adjust:100%; }
-    body { margin:0; background:var(--bg); color:var(--fg); font-family:Outfit,sans-serif; overflow-x:hidden; }
-    main { max-width:40rem; margin:0 auto; padding:calc(1.25rem + env(safe-area-inset-top)) 1rem calc(2.5rem + env(safe-area-inset-bottom)); }
-    .kicker, h2, .mark, .streak-num { font-family:Silkscreen,monospace; letter-spacing:.08em; text-transform:uppercase; }
-    h1 { font-family:Silkscreen,monospace; font-size:clamp(1.7rem,8vw,2.6rem); margin:.4rem 0 0; line-height:1.15; }
-    h2 { margin:0 0 .75rem; font-size:.95rem; letter-spacing:.14em; }
-    a { color:var(--gold); }
-    .nav-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-top:1rem; }
-    nav { display:flex; flex-wrap:wrap; gap:.5rem; }
-    .tab { display:inline-flex; align-items:center; justify-content:center; min-height:44px; padding:0 16px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-weight:600; font-size:15px; text-decoration:none; }
-    .tab.on { background:var(--gold); color:var(--ink); border-color:var(--gold); }
-    .banner, .card, .note { border:1px solid var(--line); border-radius:.9rem; }
-    .banner { margin-top:1rem; background:#2a2214; border-color:var(--gold); color:var(--gold); padding:.9rem 1rem; font-weight:700; }
-    .card { margin-top:1rem; background:var(--surface); padding:1.1rem 1rem; min-width:0; }
-    .muted { color:var(--muted); }
-    .gold { color:var(--gold); }
-    .clock { font-family:Silkscreen,monospace; font-size:clamp(1.8rem,8vw,2.6rem); letter-spacing:.06em; margin:.2rem 0; line-height:1.2; }
-    .face-top { display:flex; gap:.85rem; align-items:center; }
-    .portrait { width:7.2rem; height:9.4rem; object-fit:cover; object-position:center top; flex:none; border-radius:.8rem; border:1px solid var(--gold); background:#0c0b09; }
-    .badge { display:inline-block; margin:0; padding:.28rem .7rem; border-radius:999px; background:var(--gold); color:var(--ink); font-weight:700; font-size:.85rem; }
-    .who { margin:.45rem 0 0; font-weight:700; overflow-wrap:anywhere; }
-    .streak-num { margin:.15rem 0 0; color:var(--gold); font-size:clamp(3rem,14vw,4.6rem); line-height:.9; letter-spacing:.02em; }
+    .rank-pill { display:inline-block; align-self:flex-start; margin:.55rem 0 0; padding:.28rem .7rem; border-radius:999px; background:var(--gold); color:var(--ink); font-weight:700; font-size:.85rem; }
+    .who { margin:.45rem 0 0; font-weight:700; }
+    .streak-num { margin:.15rem 0 0; color:var(--gold); font-family:Silkscreen,monospace; font-size:clamp(3rem,14vw,4.6rem); line-height:.9; letter-spacing:.02em; }
     .streak-kind { margin:.15rem 0 0; }
-    .stats { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; margin-top:.85rem; }
-    .stats div, .fill li { background:var(--inset); border-radius:.8rem; padding:.75rem .7rem; min-width:0; }
-    .stats span, .fill span { color:var(--muted); font-size:.8rem; }
-    .stats b, .fill b { display:block; margin-top:.2rem; font-size:1.05rem; overflow-wrap:anywhere; }
     .wide { grid-column:1 / -1; }
     .fill { list-style:none; margin:.2rem 0 0; padding:0; }
-    .fill li { margin-top:.5rem; border:1px solid transparent; }
+    .fill li { background:var(--inset); border-radius:.8rem; padding:.75rem .7rem; margin-top:.5rem; min-width:0; border:1px solid transparent; }
+    .fill b { display:block; margin-top:.2rem; overflow-wrap:anywhere; }
+    .fill span { color:var(--muted); font-size:.8rem; }
     .fill li.mine { border-color:var(--gold); background:#2a2214; }
-    .note { margin-top:1rem; background:var(--inset); padding:1rem; line-height:1.55; }
-    p { line-height:1.55; overflow-wrap:anywhere; }
     label { display:block; margin:0 0 .4rem; font-weight:600; }
     .row { display:flex; gap:.5rem; }
-    input, button { font:inherit; min-width:0; }
-    input { flex:1; height:44px; padding:0 1rem; border-radius:999px; border:1px solid var(--line); background:var(--inset); color:var(--fg); font-size:16px; }
-    button { height:44px; padding:0 16px; border:0; border-radius:999px; background:var(--gold); color:var(--ink); font-size:16px; font-weight:700; cursor:pointer; }
+    input { flex:1; min-width:0; height:44px; padding:0 1rem; border-radius:999px; border:1px solid var(--line); background:var(--inset); color:var(--fg); font:inherit; font-size:16px; }
     .more { display:block; width:100%; margin-top:.75rem; }
     .track { height:14px; margin-top:.45rem; background:var(--inset); border-radius:999px; overflow:hidden; border:1px solid var(--line); }
     .track i { display:block; height:100%; width:0; background:var(--gold); }
-    .climb { display:flex; flex-direction:column-reverse; gap:.55rem; position:relative; }
-    .rung { position:relative; display:grid; grid-template-columns:2.6rem 1fr auto; align-items:center; column-gap:.7rem; background:var(--inset); border:1px solid var(--line); border-radius:.85rem; padding:.7rem .75rem; }
+    .climb { display:flex; flex-direction:column-reverse; gap:.55rem; }
+    .rung { display:grid; grid-template-columns:2.6rem 1fr auto; align-items:center; column-gap:.7rem; background:var(--inset); border:1px solid var(--line); border-radius:.85rem; padding:.7rem .75rem; }
     .rung .icon { width:2.6rem; height:2.6rem; display:grid; place-items:center; border-radius:.7rem; background:#221c14; }
     .rung svg { width:1.45rem; height:1.45rem; fill:none; stroke:var(--gold); stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     .rung b { display:block; font-size:1rem; }
@@ -60,14 +34,12 @@
     .rung .days { color:var(--muted); font-size:.8rem; }
     .rung .count { color:var(--fg); font-weight:700; text-align:right; }
     .rung.here { border-color:var(--gold); background:#2a2214; }
-    .mark, .trail { margin:.15rem 0 0; color:var(--gold); font-size:.72rem; letter-spacing:.12em; }
+    .mark, .trail { margin:.15rem 0 0; color:var(--gold); font-family:Silkscreen,monospace; font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; }
     .trail { margin:.7rem 0 0; text-align:center; }
     .store { margin-top:.9rem; border:1px dashed var(--line); border-radius:.8rem; padding:.85rem .9rem; background:var(--inset); }
     .store p { margin:.25rem 0 0; }
-    [hidden] { display:none !important; }
+    .banner { margin-top:1rem; background:#2a2214; color:var(--gold); padding:.9rem 1rem; font-weight:700; border-radius:.9rem; border:1px solid var(--gold); }
     @media (min-width:800px) {
-      main { max-width:64rem; }
-      .portrait { width:11rem; height:14rem; }
       .stats { grid-template-columns:repeat(3, 1fr); }
       .wide { grid-column:auto; }
       .climb { flex-direction:row; align-items:flex-end; gap:.7rem; }
@@ -82,9 +54,16 @@
 </head>
 <body>
 <main>
-  <header>
-    <p class="kicker gold">Your card</p>
-    <h1>KOREMINER</h1>
+  <header class="top">
+    <div class="title-row">
+      <div>
+        <p class="kicker gold">Card</p>
+        <h1>KOREMINER</h1>
+      </div>
+      <a class="x-link" href="https://x.com/Kore_Miner" target="_blank" rel="noopener noreferrer" aria-label="KOREMINER on X">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.727-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+      </a>
+    </div>
     <div class="nav-row">
       <nav>
         <a class="tab" href="/">The Shaft</a>
@@ -92,6 +71,7 @@
         <a class="tab" href="/barter/">Barter</a>
         <a class="tab on" href="/barter/card.html" aria-current="page">Card</a>
       </nav>
+      <p class="badge">Picks live · Payouts open</p>
     </div>
   </header>
   <p class="banner" id="warming" hidden>Board is warming up, check back after the close</p>
@@ -104,40 +84,39 @@
         <button id="show" type="button">Show the card</button>
       </div>
       <p class="muted">The card keeps the short name on screen.</p>
-      <article id="result" hidden>
+    </section>
+    <article id="result" hidden>
         <p id="miss" class="muted" hidden></p>
-        <div id="face">
-          <div class="face-top">
-            <img id="portrait" class="portrait" src="/cheetah-miner.jpg" alt="A cheetah miner in a helmet, holding a pick" />
-            <div>
-              <p class="badge" id="rank">—</p>
-              <p class="who" id="who"></p>
-              <p class="streak-num" id="streak-big">—</p>
-              <p class="streak-kind muted" id="streak-kind">Ladder streak</p>
-            </div>
-          </div>
+        <figure class="boss" id="face">
+          <img id="portrait" src="/cheetah-miner.jpg" alt="A cheetah miner in a helmet, holding a pick" />
+          <figcaption class="card">
+            <div class="kicker gold" id="portrait-name">Shift Boss</div>
+            <p class="rank-pill" id="rank">—</p>
+            <p class="who" id="who"></p>
+            <p class="streak-num" id="streak-big">—</p>
+            <p class="streak-kind muted" id="streak-kind">Ladder streak</p>
+          </figcaption>
+        </figure>
+        <div id="body" class="card">
           <p id="next" class="muted"></p>
           <div class="track" aria-hidden="true"><i id="bar"></i></div>
-          <div id="body">
-            <div class="stats">
-              <div><span>Fuel</span><b id="fuel">—</b></div>
-              <div><span>Mining streak</span><b id="mining">—</b></div>
-              <div class="wide"><span>Ladder streak</span><b id="ladder">—</b></div>
-              <div><span>KORE paid</span><b id="paid">—</b></div>
-              <div><span>KORE waiting</span><b id="waiting">—</b></div>
-              <div><span>Buyer nights</span><b id="buyers">—</b></div>
-            </div>
-            <p id="shields"></p>
-            <p id="barterer"></p>
-            <p id="upgrades"></p>
+          <div class="stats">
+            <div><span>Fuel</span><b id="fuel">—</b></div>
+            <div><span>Mining streak</span><b id="mining">—</b></div>
+            <div class="wide"><span>Ladder streak</span><b id="ladder">—</b></div>
+            <div><span>KORE paid</span><b id="paid">—</b></div>
+            <div><span>KORE waiting</span><b id="waiting">—</b></div>
+            <div><span>Buyer nights</span><b id="buyers">—</b></div>
           </div>
+          <p id="shields"></p>
+          <p id="barterer"></p>
+          <p id="upgrades"></p>
         </div>
         <div class="store" role="note">
           <p class="kicker gold">Store</p>
           <p>Store opens soon</p>
         </div>
       </article>
-    </section>
     <section class="card">
       <h2 class="gold">The ladder</h2>
       <div class="climb" id="rungs"></div>
@@ -156,7 +135,7 @@
       <button id="more" class="more" type="button" hidden>Show all</button>
     </section>
   </div>
-  <p class="note">Streaks and payouts are read from public data. Nothing here is financial advice.</p>
+  <p class="card note">Streaks and payouts are read from public data. Nothing here is financial advice.</p>
 </main>
 <script type="module">
 import {
@@ -205,12 +184,12 @@ function paintClock() {
 
 function portraitFor(rank) {
   if (rank === "Barterer") {
-    return ["/barterer.jpg", "The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger"];
+    return ["/barterer.jpg", "The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger", "Barterer"];
   }
   if (rank === "Narrator Book") {
-    return ["/storyteller.jpg", "The Narrator, an old cheetah reading a glowing book"];
+    return ["/storyteller.jpg", "The Narrator, an old cheetah reading a glowing book", "Narrator"];
   }
-  return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick"];
+  return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick", "Shift Boss"];
 }
 
 function markClimb(rank, loaded) {
@@ -248,6 +227,7 @@ function paintPlayer(view) {
   const portrait = document.getElementById("portrait");
   portrait.src = art[0];
   portrait.alt = art[1];
+  document.getElementById("portrait-name").textContent = art[2];
   document.getElementById("who").textContent = view.show || "";
   const streak = view.ladderStreak == null ? view.miningStreak : view.ladderStreak;
   document.getElementById("streak-big").textContent = String(streak);

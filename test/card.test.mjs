@@ -207,6 +207,12 @@ test("the public card text has no full address and the page stays read only", ()
   assert.equal(page.includes("Barterer"), true);
   assert.equal(/<a\b[^>]*store/i.test(page), false);
   assert.equal(home.includes("/barterer.jpg"), true);
+  assert.equal(home.includes('href="site.css"'), true);
+  assert.equal(page.includes('href="site.css"'), true);
+  assert.equal(home.includes('class="boss"'), true);
+  assert.equal(page.includes('class="boss"'), true);
+  assert.equal(home.includes(">Barter<"), true);
+  assert.equal(page.includes(">Card<"), true);
   assert.equal(page.includes('fetch("/lookup.json")'), true);
   assert.equal(page.includes('fetch("/barter/ladder.json")'), true);
   assert.equal(page.includes('fetch("/barter/call-latest.json")'), true);
