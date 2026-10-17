@@ -21,8 +21,11 @@
     nav { display:flex; flex-wrap:wrap; gap:.5rem; }
     .tab { display:inline-flex; align-items:center; justify-content:center; height:44px; padding:0 16px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--muted); font-weight:600; font-size:15px; text-decoration:none; }
     .tab.on { background:var(--gold); color:var(--ink); border-color:var(--gold); }
-    .banner, .card, .note { border:1px solid var(--line); border-radius:.9rem; }
+    .banner, .card, .note, .hero { border:1px solid var(--line); border-radius:.9rem; }
     .banner { margin-top:1rem; background:#2a2214; border-color:var(--gold); color:var(--gold); padding:.9rem 1rem; font-weight:700; }
+    .hero { display:flex; align-items:center; gap:.9rem; margin-top:1rem; background:#2a2214; border-color:var(--gold); padding:.75rem; }
+    .hero img { width:7rem; height:9rem; object-fit:cover; object-position:center top; flex:none; border-radius:.75rem; background:#0c0b09; }
+    .hero-line { font-family:Silkscreen,monospace; font-size:clamp(1rem,4.2vw,1.45rem); line-height:1.35; margin:.35rem 0 0; letter-spacing:.04em; }
     .card { margin-top:1rem; background:var(--surface); padding:1.1rem 1rem; min-width:0; }
     .muted { color:var(--muted); }
     .gold { color:var(--gold); }
@@ -38,6 +41,10 @@
     .note { margin-top:1rem; background:var(--inset); padding:1rem; line-height:1.55; }
     p { line-height:1.55; overflow-wrap:anywhere; }
     [hidden] { display:none !important; }
+    @media (min-width:800px) {
+      main { max-width:52rem; }
+      .hero img { width:11rem; height:14rem; }
+    }
   </style>
 </head>
 <body>
@@ -54,7 +61,13 @@
       </nav>
     </div>
   </header>
-  <p class="banner" id="banner" hidden>Practice call. No coins move.</p>
+  <section class="hero" id="banner" hidden>
+    <img src="/barterer.jpg" alt="The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger" />
+    <div>
+      <p class="kicker gold">The Barterer</p>
+      <p class="hero-line">Practice call. No coins move.</p>
+    </div>
+  </section>
   <section class="card">
     <h2 class="gold">Time to the call</h2>
     <p class="muted" id="when">—</p>
