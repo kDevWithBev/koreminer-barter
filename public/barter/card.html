@@ -71,7 +71,7 @@
         <a class="tab" href="/barter/">Barter</a>
         <a class="tab on" href="/barter/card.html" aria-current="page">Card</a>
       </nav>
-      <p class="badge">Picks live · Payouts open</p>
+      <p class="badge" id="picks">Picks live</p>
     </div>
   </header>
   <p class="banner" id="warming" hidden>Board is warming up, check back after the close</p>
@@ -137,6 +137,7 @@
   </div>
   <p class="card note">Streaks and payouts are read from public data. Nothing here is financial advice.</p>
 </main>
+<script src="picks.js"></script>
 <script type="module">
 import {
   STORAGE_KEY,

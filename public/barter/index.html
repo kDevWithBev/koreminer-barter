@@ -34,7 +34,7 @@
         <a class="tab on" href="/barter/" aria-current="page">Barter</a>
         <a class="tab" href="/barter/card.html">Card</a>
       </nav>
-      <p class="badge">Picks live · Payouts open</p>
+      <p class="badge" id="picks">Picks live</p>
     </div>
   </header>
   <figure class="boss" id="banner" hidden>
@@ -222,5 +222,6 @@ fetch("ladder.json")
     document.getElementById("buyers-empty").hidden = false;
   });
 </script>
+<script src="picks.js"></script>
 </body>
 </html>

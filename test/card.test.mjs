@@ -213,6 +213,16 @@ test("the public card text has no full address and the page stays read only", ()
   assert.equal(page.includes('class="boss"'), true);
   assert.equal(home.includes(">Barter<"), true);
   assert.equal(page.includes(">Card<"), true);
+  const picks = readFileSync(`${ROOT}public/barter/picks.js`, "utf8");
+  assert.equal(home.includes('src="picks.js"'), true);
+  assert.equal(page.includes('src="picks.js"'), true);
+  assert.equal(home.includes("Payouts open"), false);
+  assert.equal(page.includes("Payouts open"), false);
+  assert.equal(picks.includes('fetch("/lookup.json?t="'), true);
+  assert.equal(picks.includes("book.send === true"), true);
+  assert.equal(picks.includes("Picks live · Payouts open"), true);
+  assert.equal(picks.includes("Picks live · KORE not open yet"), true);
+  assert.equal(BANNED.test(picks), false);
   assert.equal(page.includes('fetch("/lookup.json")'), true);
   assert.equal(page.includes('fetch("/barter/ladder.json")'), true);
   assert.equal(page.includes('fetch("/barter/call-latest.json")'), true);
