@@ -435,7 +435,7 @@ test("the house line says it is buying only when it holds no KORE", () => {
   assert.equal(both.includes("buying only"), false);
   const page = readFileSync(join(ROOT, "public/barter/index.html"), "utf8");
   assert.equal(page.includes("House is buying only tonight."), true);
-  assert.equal(page.includes("Practice call. No coins move."), true);
+  assert.equal(page.includes("Practice call only, no coins move. Learn the ledger first."), true);
   assert.equal(/<form/i.test(page), false);
   assert.equal(/\bBase\b/.test(page), false);
   assert.equal(/floor|yield|\bapr\b|dividend|passive income|guaranteed|more rewards coming/i.test(page), false);

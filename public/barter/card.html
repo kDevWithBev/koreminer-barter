@@ -79,7 +79,7 @@
     <img id="portrait" src="/cheetah-miner.jpg" alt="A cheetah miner in a helmet, holding a pick" />
     <figcaption class="card">
       <div class="kicker gold" id="portrait-name">Shift Boss</div>
-      <p class="muted" id="portrait-line">The miner with the pick.</p>
+      <p class="muted" id="portrait-line">The miner with the pick. Keep the streak warm tonight.</p>
     </figcaption>
   </figure>
   <section class="card">
@@ -189,12 +189,15 @@ function paintClock() {
 
 function portraitFor(rank) {
   if (rank === "Barterer") {
-    return ["/barterer.jpg", "The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger", "Barterer", "The young cheetah with the ledger."];
+    return ["/barterer.jpg", "The Barterer, a young cheetah in a red jacket with coin badges, holding a ledger", "Barterer", "Eighty-four days mined. Barterers get the practice call first."];
   }
   if (rank === "Narrator Book") {
-    return ["/storyteller.jpg", "The Narrator, an old cheetah reading a glowing book", "Narrator", "The old cheetah with the book."];
+    return ["/storyteller.jpg", "The Narrator, an old cheetah reading a glowing book", "Narrator", "Fifty-six days in the ledger. Your story is written down."];
   }
-  return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick", "Shift Boss", "The miner with the pick."];
+  if (rank === "Shift Boss Shield") {
+    return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick", "Shift Boss", "Twenty-eight days down. The shield covers one missed shift."];
+  }
+  return ["/cheetah-miner.jpg", "A cheetah miner in a helmet, holding a pick", "Shift Boss", "The miner with the pick. Keep the streak warm tonight."];
 }
 
 function markClimb(rank, loaded) {
