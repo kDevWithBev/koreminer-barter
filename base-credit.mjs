@@ -15,11 +15,11 @@ const ROUTER_CODE = 1000;
 const BEFORE = 720n;
 const AFTER = 120n;
 const CHUNK = 400n;
-const FAIL_MS = 86_400_000;
+const FAIL_MS = 3_600_000;
 const FETCH_MS = 10_000;
 const LOOP_MS = 20_000;
 const BANNED = new Set([SHAFT, BRIDGE_CONTRACT, ENTRYPOINT]);
-const RPCS = ["https://base-rpc.publicnode.com", "https://base.drpc.org"];
+const RPCS = ["https://base.gateway.tenderly.co", "https://base-rpc.publicnode.com", "https://base.drpc.org"];
 
 export class LookupFailed extends Error {
   constructor() { super("Base lookup failed, retry"); }
@@ -166,7 +166,7 @@ export const liveIo = {
         fromBlock: `0x${start.toString(16)}`,
         toBlock: `0x${end.toString(16)}`,
         address: BRIDGE_CONTRACT,
-        topics: [DEPOSIT_TOPIC, null, `0x${SHAFT.slice(2).padStart(64, "0")}`, `0x${KTA.slice(2).padStart(64, "0")}`],
+        topics: [DEPOSIT_TOPIC, null, null, `0x${KTA.slice(2).padStart(64, "0")}`],
       }], deadline);
       if (!Array.isArray(raw)) throw new LookupFailed();
       for (const log of raw) {
@@ -286,7 +286,8 @@ async function findCredit(t, amount, timeMs, { io, used, deadline }) {
   const before = BEFORE + slop;
   const after = AFTER + slop;
   const from = est > before ? est - before : 0n;
-  const deposits = await io.deposits(from, est + after, deadline);
+  const to = est + after > head ? head : est + after;
+  const deposits = await io.deposits(from, to, deadline);
   if (!Array.isArray(deposits)) throw new LookupFailed();
   const dest = shaftDestination();
   const withId = deposits.filter((log) => log && String(log.id).toLowerCase() === t);
@@ -364,7 +365,7 @@ export async function attributeDeposits(staple, { links = {}, books = {}, io = l
     } catch {
       if (rememberFailure(books, t, now)) {
         delete books.lookupSince[t];
-        console.log("Bridge unresolved.", block || "none", t);
+        console.log("Bridge parked after 1h of failed lookups", block || "none", t);
         deposits.push(parked);
         continue;
       }
@@ -377,6 +378,7 @@ export async function attributeDeposits(staple, { links = {}, books = {}, io = l
 export async function creditStaples(books, staples, options) {
   const deadline = Date.now() + LOOP_MS;
   for (const staple of staples ?? []) {
+    if (staple?.blocksHash && books.recent?.includes(staple.blocksHash)) continue;
     const named = await attributeDeposits(staple, { ...options, books, deadline });
     if (named.retry) {
       console.log("Base lookup failed, retry");

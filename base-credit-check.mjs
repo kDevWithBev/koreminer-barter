@@ -281,6 +281,54 @@ const banned = await attributeDeposits({
 });
 check("a banned sender is parked", banned.retry === false && banned.staple.deposits[0].credit === false);
 
+const stranger = `0x${"99".repeat(20)}`;
+const strangerId = `0x${"ee".repeat(32)}`;
+const strangerWhen = open + 8000;
+const strangerHead = 500n;
+let windowTo = -1n;
+let askedTx = false;
+const strangerBooks = createBooks(open, kta(2));
+strangerBooks.cursor = "stranger-old";
+const strangerPass = await creditStaples(strangerBooks, [{
+  blocksHash: "stranger",
+  timeMs: strangerWhen,
+  deposits: [{ from: BRIDGE, amount: kta(4), external: strangerId, block: "block-stranger" }],
+}], {
+  newest: "stranger-new",
+  ingest,
+  now: strangerWhen,
+  io: {
+    async latest() {
+      return { number: strangerHead, time: Math.floor(strangerWhen / 1000) + 30 };
+    },
+    async deposits(_from, to) {
+      windowTo = to;
+      return [{
+        id: strangerId,
+        sender: stranger,
+        amount: kta(4),
+        recipient: shaftDestination(),
+        transactionHash: sweepWallet,
+        blockNumber: "0x1f4",
+        transactionIndex: "0x1",
+        logIndex: "0x1",
+      }];
+    },
+    async tx() { askedTx = true; return null; },
+    async transfers() { askedTx = true; return []; },
+    async code() { return 0; },
+  },
+});
+check("a deposit from another sender is parked without a retry", strangerPass === "ok"
+  && askedTx === false
+  && strangerBooks.cursor === "stranger-new"
+  && strangerBooks.parked === kta(4)
+  && strangerBooks.unresolved.length === 1
+  && strangerBooks.unresolved[0].t === strangerId
+  && strangerBooks.unresolved[0].block === "block-stranger"
+  && (strangerBooks.share.stake.get(`base:${stranger}`) ?? 0n) === 0n);
+check("the window end is never above the head", windowTo === strangerHead && windowTo <= strangerHead);
+
 const burnBooks = createBooks(open, kta(2));
 deposit(burnBooks.share, "keeta_alice", kta(1), open);
 burnBooks.parked = kta(10);
@@ -501,6 +549,8 @@ let rpcMode = "live";
 let rpcCalls = [];
 let sawSignal = false;
 let sawAgent = false;
+let maxLogTo = 0n;
+let depositTopics = null;
 const originalFetch = globalThis.fetch;
 function rpcJson(result) {
   return { json: async () => ({ jsonrpc: "2.0", id: 1, result }) };
@@ -526,8 +576,10 @@ function installRpc() {
       const filter = request.params[0];
       const from = BigInt(filter.fromBlock);
       const to = BigInt(filter.toBlock);
+      if (to > maxLogTo) maxLogTo = to;
       const address = String(filter.address).toLowerCase();
       const topic0 = String(filter.topics?.[0] || "").toLowerCase();
+      if (address === BRIDGE_CONTRACT && depositTopics === null) depositTopics = filter.topics;
       const pool = address === BRIDGE_CONTRACT ? liveDeposits : address === KTA ? liveTransfers : [];
       return rpcJson(pool.filter((log) => {
         const block = BigInt(log.blockNumber);
@@ -553,6 +605,12 @@ try {
   check("B26B resolves through the mocked deposit to 0x2db970e1", first === "ok" && liveBooks.share.stake.get(`base:${ORIGIN}`) === amtB26);
   check("B26B uses the buy transfer once", liveBooks.used.includes(`${buyB26}:0x68`) && liveBooks.cursor === "cursor-b26");
   check("B26B does not credit the bridge", (liveBooks.share.stake.get(BRIDGE) ?? 0n) === 0n);
+  const ktaTopic = `0x${KTA.slice(2).padStart(64, "0")}`;
+  check("deposit search is the bridge, the event, and the token", Array.isArray(depositTopics)
+    && depositTopics[0] === depositTopic
+    && depositTopics[2] == null
+    && String(depositTopics[3]).toLowerCase() === ktaTopic);
+  check("a live window ends at the head", maxLogTo <= tipNumber);
   clearCache();
   useTip(time440, 0x324c4abn);
   const second = await creditStaples(liveBooks, [read440], { newest: "cursor-440", ingest, now: time440 });
@@ -595,21 +653,39 @@ try {
 
   rpcMode = "down";
   clearCache();
-  const agedNow = time440 + 86_400_000 + 5_000;
-  const aged = createBooks(timeB26, kta(2));
-  aged.cursor = "aged-old";
-  aged.lookupSince[tB26] = agedNow - 86_400_000 - 1;
-  const agedRow = readStaple(bridgeRow({
-    blocksHash: "staple-aged", block: hashB26, timeMs: timeB26, amount: amtB26, external: extB26,
+  const hourNow = time440 + 10_000;
+  const hourBooks = createBooks(timeB26, kta(2));
+  hourBooks.cursor = "hour-old";
+  const hourRow = readStaple(bridgeRow({
+    blocksHash: "staple-hour", block: hashB26, timeMs: timeB26, amount: amtB26, external: extB26,
   }), "kta");
-  const agedResult = await creditStaples(aged, [agedRow], { newest: "aged-new", ingest, now: agedNow });
-  check("a lookup that fails for a day is parked", agedResult === "ok" && aged.cursor === "aged-new" && aged.parked === amtB26);
-  check("a parked day keeps the block, id, amount, and time", aged.unresolved.length === 1
-    && aged.unresolved[0].block === hashB26
-    && aged.unresolved[0].t === tB26
-    && aged.unresolved[0].amount === amtB26.toString()
-    && aged.unresolved[0].time === timeB26
-    && (aged.share.stake.get(`base:${ORIGIN}`) ?? 0n) === 0n);
+  const early = await creditStaples(hourBooks, [hourRow], { newest: "hour-new", ingest, now: hourNow });
+  check("a fresh lookup failure retries", early === "retry" && hourBooks.cursor === "hour-old" && hourBooks.parked === 0n);
+  const still = await creditStaples(hourBooks, [hourRow], { newest: "hour-new", ingest, now: hourNow + 3_600_000 - 1 });
+  check("a lookup under an hour still retries", still === "retry" && hourBooks.cursor === "hour-old" && hourBooks.parked === 0n);
+  const lines = [];
+  const write = console.log;
+  console.log = (...args) => {
+    lines.push(args.map((item) => String(item)).join(" "));
+    write(...args);
+  };
+  let hourResult;
+  try {
+    hourResult = await creditStaples(hourBooks, [hourRow], { newest: "hour-new", ingest, now: hourNow + 3_600_000 });
+  } finally {
+    console.log = write;
+  }
+  check("a lookup that fails for an hour is parked", hourResult === "ok" && hourBooks.cursor === "hour-new" && hourBooks.parked === amtB26);
+  check("an hour of failures says the bridge was parked", lines.some((line) => line.includes("Bridge parked after 1h of failed lookups")
+    && line.includes(hashB26) && line.includes(tB26)));
+  check("a parked hour keeps the block, id, amount, and time", hourBooks.unresolved.length === 1
+    && hourBooks.unresolved[0].block === hashB26
+    && hourBooks.unresolved[0].t === tB26
+    && hourBooks.unresolved[0].amount === amtB26.toString()
+    && hourBooks.unresolved[0].time === timeB26
+    && (hourBooks.share.stake.get(`base:${ORIGIN}`) ?? 0n) === 0n);
+  const next = await creditStaples(hourBooks, [hourRow], { newest: "hour-next", ingest, now: hourNow + 3_600_000 + 1 });
+  check("the next pass returns ok", next === "ok" && hourBooks.cursor === "hour-next" && hourBooks.parked === amtB26 && hourBooks.unresolved.length === 1);
 
   clearCache();
   let fetchedLate = false;
