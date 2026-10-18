@@ -12,13 +12,19 @@ function text(value) {
   return value.publicKeyString?.toString?.() ?? "";
 }
 
-function externalOf(value) {
-  if (typeof value === "string") {
-    const hex = value.startsWith("0x") || value.startsWith("0X") ? value.slice(2) : value;
-    if (/^[0-9a-fA-F]{64}$/.test(hex)) return `0x${hex.toLowerCase()}`;
-  }
-  if (value instanceof Uint8Array && value.length === 32) {
-    return `0x${[...value].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+function rawExternal(value) {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("base64");
+  return "";
+}
+
+function blockHash(block) {
+  const value = block?.hash ?? block?.$hash;
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value.toString === "function") {
+    const text = value.toString();
+    if (text && text !== "[object Object]") return text;
   }
   return "";
 }
@@ -44,7 +50,8 @@ export function readStaple(row, base) {
         deposits.push({
           from,
           amount,
-          external: externalOf(op.external) || externalOf(block.external),
+          external: rawExternal(op.external) || rawExternal(block.external),
+          block: blockHash(block),
         });
       }
     }

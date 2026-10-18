@@ -36,6 +36,7 @@ async function ethCall(to, data) {
     method: "POST",
     headers: { "content-type": "application/json", "user-agent": "koreminer/1.0" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+    signal: AbortSignal.timeout(10000),
   });
   const body = await response.json();
   return body.result ?? "";

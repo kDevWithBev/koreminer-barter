@@ -5,7 +5,7 @@ import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
 import { applyPaid, choosePayout, floorAfter, judgeIntent } from "./pay.mjs";
-import { attributeDeposits } from "./base-credit.mjs";
+import { creditStaples } from "./base-credit.mjs";
 import { applyLinks, readLinks } from "./links.mjs";
 
 const intake =
@@ -110,12 +110,15 @@ async function syncChain(books, baseText) {
     if (staple) staples.push(staple);
   }
   staples.sort((a, b) => a.timeMs - b.timeMs);
-  const links = readLinks(linksPath);
-  for (const staple of staples) {
-    const named = await attributeDeposits(staple, { links });
-    if (ingestSafe(books, named) === "halt-reserve") return "halt-reserve";
-  }
-  if (rows.length > 0) books.cursor = rows[0].voteStaple.blocksHash.toString();
+  const newest = rows.length > 0 ? rows[0].voteStaple.blocksHash.toString() : "";
+  const named = await creditStaples(books, staples, {
+    newest,
+    links: readLinks(linksPath),
+    ingest: ingestSafe,
+    now: Date.now(),
+  });
+  if (named === "halt-reserve") return "halt-reserve";
+  if (named === "retry") return books.share.lastMs;
   const chainMs = staples.reduce((max, staple) => Math.max(max, staple.timeMs), books.share.lastMs);
   return chainMs;
 }

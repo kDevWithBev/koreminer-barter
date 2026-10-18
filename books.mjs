@@ -38,20 +38,17 @@ export function createBooks(nowMs, balance) {
     arm: startMs,
     parked: 0n,
     unresolved: [],
+    used: [],
+    lookupSince: {},
   };
 }
 
 function applyBurn(books, fee, nowMs) {
-  const parked = books.parked ?? 0n;
-  const cover = stakeOf(books) + books.operator + parked;
+  const cover = stakeOf(books) + books.operator;
   if (fee < 0n || fee > cover) return false;
   const left = burn(books.share, fee, nowMs);
-  if (left > books.operator + parked) return false;
-  if (left <= books.operator) books.operator -= left;
-  else {
-    books.parked = parked - (left - books.operator);
-    books.operator = 0n;
-  }
+  if (left > books.operator) return false;
+  books.operator -= left;
   return true;
 }
 
@@ -69,13 +66,8 @@ export function ingest(books, staple) {
   let reserve = books.share.reserve;
   let stake = stakeOf(books);
   let operator = books.operator;
-  let parked = books.parked ?? 0n;
   for (const item of staple.deposits ?? []) {
-    if (item.amount <= 0n) continue;
-    if (item.credit === false) {
-      parked += item.amount;
-      continue;
-    }
+    if (item.amount <= 0n || item.credit === false) continue;
     if (staple.timeMs < books.arm) {
       operator += item.amount;
       continue;
@@ -91,14 +83,20 @@ export function ingest(books, staple) {
   }
   const drops = books.pendingDrops.slice(0, staple.ownPicks ?? 0);
   const burnSum = drops.reduce((sum, drop) => sum + drop, 0n);
-  if (burnSum > stake + operator + parked) return "halt-reserve";
+  if (burnSum > stake + operator) return "halt-reserve";
   books.parked ??= 0n;
   books.unresolved ??= [];
+  books.used ??= [];
   for (const item of staple.deposits ?? []) {
     if (item.amount <= 0n) continue;
     if (item.credit === false) {
       books.parked += item.amount;
-      books.unresolved.push({ tx: String(item.tx || item.external || "none"), amount: item.amount.toString() });
+      books.unresolved.push({
+        block: String(item.block || staple.blocksHash || ""),
+        t: String(item.t || ""),
+        amount: item.amount.toString(),
+        time: Number.isFinite(staple.timeMs) ? staple.timeMs : 0,
+      });
       continue;
     }
     if (staple.timeMs < books.arm) {
@@ -106,6 +104,7 @@ export function ingest(books, staple) {
       continue;
     }
     deposit(books.share, item.from, item.amount, when);
+    if (item.transfer && !books.used.includes(item.transfer)) books.used.push(item.transfer);
   }
   for (const drop of drops) {
     books.pendingDrops.shift();
@@ -133,7 +132,7 @@ export function reconcile(books, balance, chainMs, nowMs) {
     const waited = books.pendingSince > 0 && nowMs - books.pendingSince >= burnWaitMs;
     if (!(waited && pending === short)) return "waiting-burn";
   }
-  if (short > stakeOf(books) + books.operator + (books.parked ?? 0n)) return "halt-reserve";
+  if (short > stakeOf(books) + books.operator) return "halt-reserve";
   if (!applyBurn(books, short, chainMs)) return "halt-reserve";
   books.pendingDrops = [];
   books.pendingSince = 0;
@@ -266,6 +265,8 @@ export function booksToJson(books) {
     streak: Object.fromEntries([...books.share.streak.entries()].map(([key, row]) => [key, row])),
     parked: (books.parked ?? 0n).toString(),
     unresolved: books.unresolved ?? [],
+    used: books.used ?? [],
+    lookupSince: books.lookupSince ?? {},
   };
 }
 
@@ -296,5 +297,7 @@ export function booksFromJson(raw) {
     arm: Number(raw.arm) || startMs,
     parked: BigInt(raw.parked ?? "0"),
     unresolved: Array.isArray(raw.unresolved) ? raw.unresolved : [],
+    used: Array.isArray(raw.used) ? raw.used : [],
+    lookupSince: raw.lookupSince && typeof raw.lookupSince === "object" ? raw.lookupSince : {},
   };
 }
