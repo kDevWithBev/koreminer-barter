@@ -31,7 +31,7 @@ export function judgeIntent(balance, intent) {
   const amount = BigInt(intent.amount);
   if (balance === floor) return "paid";
   if (balance === floor + amount) return "missed";
-  return "halt";
+  return "hold";
 }
 
 export function applyPaid(share, intent) {

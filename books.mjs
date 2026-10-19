@@ -6,7 +6,7 @@ import { startMs } from "./ledger.mjs";
 
 const recentCap = 5_000;
 const burnWaitMs = 120_000;
-const dust = 120_000_000_000_000n; // one pick. Smaller than this is not a miner's send.
+const dust = 120_000_000_000_000n;
 
 export function stakeOf(books) {
   let sum = 0n;
@@ -15,7 +15,7 @@ export function stakeOf(books) {
 }
 
 export function accounted(books) {
-  return books.share.reserve + stakeOf(books) + books.operator + (books.parked ?? 0n);
+  return books.share.reserve + stakeOf(books) + books.operator;
 }
 
 export function createBooks(nowMs, balance) {
@@ -36,10 +36,6 @@ export function createBooks(nowMs, balance) {
     pendingDrops: [],
     pendingSince: 0,
     arm: startMs,
-    parked: 0n,
-    unresolved: [],
-    used: [],
-    lookupSince: {},
   };
 }
 
@@ -67,7 +63,7 @@ export function ingest(books, staple) {
   let stake = stakeOf(books);
   let operator = books.operator;
   for (const item of staple.deposits ?? []) {
-    if (item.amount <= 0n || item.credit === false) continue;
+    if (item.amount <= 0n) continue;
     if (staple.timeMs < books.arm) {
       operator += item.amount;
       continue;
@@ -84,27 +80,13 @@ export function ingest(books, staple) {
   const drops = books.pendingDrops.slice(0, staple.ownPicks ?? 0);
   const burnSum = drops.reduce((sum, drop) => sum + drop, 0n);
   if (burnSum > stake + operator) return "halt-reserve";
-  books.parked ??= 0n;
-  books.unresolved ??= [];
-  books.used ??= [];
   for (const item of staple.deposits ?? []) {
     if (item.amount <= 0n) continue;
-    if (item.credit === false) {
-      books.parked += item.amount;
-      books.unresolved.push({
-        block: String(item.block || staple.blocksHash || ""),
-        t: String(item.t || ""),
-        amount: item.amount.toString(),
-        time: Number.isFinite(staple.timeMs) ? staple.timeMs : 0,
-      });
-      continue;
-    }
     if (staple.timeMs < books.arm) {
       books.operator += item.amount;
       continue;
     }
     deposit(books.share, item.from, item.amount, when);
-    if (item.transfer && !books.used.includes(item.transfer)) books.used.push(item.transfer);
   }
   for (const drop of drops) {
     books.pendingDrops.shift();
@@ -148,7 +130,7 @@ export function payoutPlan(books, sending = false) {
     rows.push({
       from,
       amount: amount.toString(),
-      key: `kore:${from}:${counted}`,
+      key: `kore-${from}-${counted}`,
     });
   }
   rows.sort((a, b) => (a.amount === b.amount ? (a.from < b.from ? -1 : 1) : (BigInt(a.amount) > BigInt(b.amount) ? -1 : 1)));
@@ -190,8 +172,7 @@ export function publicBooks(books, sending = false) {
     if (a.row.counted === b.row.counted) return a.from < b.from ? -1 : a.from > b.from ? 1 : 0;
     return a.row.counted > b.row.counted ? -1 : 1;
   });
-  const bridge =
-    "keeta_aqltdal4rshtky5iehd765y3mdjkcmku5d4ulo5fgonzqrxulwepnogq33mle";
+  const bridge = "keeta_aqltdal4rshtky5iehd765y3mdjkcmku5d4ulo5fgonzqrxulwepnogq33mle";
   const knownBase = "0xfe6d5e3f8cff2dc8d2dea137c87f721c69343d7d";
   const held = [];
   const miners = {};
@@ -205,18 +186,6 @@ export function publicBooks(books, sending = false) {
       });
       continue;
     }
-    if (from.startsWith("base:")) {
-      const base = from.slice(5);
-      if (/^0x[0-9a-f]{40}$/.test(base)) {
-        held.push({
-          base,
-          fuel: kta(row.fuel),
-          waiting: whole(row.waiting).toString(),
-          note: "Base deposit. Link a Keeta address at /claim. Not paid until linked.",
-        });
-      }
-      continue;
-    }
     const share = all === 0n || row.fuel === 0n ? "0.0000" : ratio(row.fuel, all);
     miners[from] = {
       fuel: kta(row.fuel),
@@ -228,7 +197,7 @@ export function publicBooks(books, sending = false) {
       paid: row.paid.toString(),
     };
   }
-  const board = ranked.filter(({ from }) => from !== bridge && !String(from).startsWith("base:")).slice(0, 20).map(({ from, row }) => ({
+  const board = ranked.filter(({ from }) => from !== bridge).slice(0, 20).map(({ from, row }) => ({
     from,
     counted: koreUnits(row.counted),
   }));
@@ -263,10 +232,6 @@ export function booksToJson(books) {
     depth: mapToObject(books.share.depth),
     seen: [...books.share.seen.keys()],
     streak: Object.fromEntries([...books.share.streak.entries()].map(([key, row]) => [key, row])),
-    parked: (books.parked ?? 0n).toString(),
-    unresolved: books.unresolved ?? [],
-    used: books.used ?? [],
-    lookupSince: books.lookupSince ?? {},
   };
 }
 
@@ -295,9 +260,5 @@ export function booksFromJson(raw) {
     pendingDrops: (raw.pendingDrops ?? []).map((drop) => BigInt(drop)),
     pendingSince: Number(raw.pendingSince) || 0,
     arm: Number(raw.arm) || startMs,
-    parked: BigInt(raw.parked ?? "0"),
-    unresolved: Array.isArray(raw.unresolved) ? raw.unresolved : [],
-    used: Array.isArray(raw.used) ? raw.used : [],
-    lookupSince: raw.lookupSince && typeof raw.lookupSince === "object" ? raw.lookupSince : {},
   };
 }

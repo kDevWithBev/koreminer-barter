@@ -5,8 +5,7 @@ import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
 import { applyPaid, choosePayout, floorAfter, judgeIntent } from "./pay.mjs";
-import { creditStaples } from "./base-credit.mjs";
-import { applyLinks, readLinks } from "./links.mjs";
+import { applyClaimFile } from "./claim.mjs";
 
 const intake =
   "keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa";
@@ -24,7 +23,6 @@ const intentPath = `${dir}/payout-intent.json`;
 const floorPath = `${dir}/kore-floor.txt`;
 const lookupPath = `${dir}/lookup.json`;
 const publicLookup = "/var/www/koreminer/lookup.json";
-const linksPath = `${dir}/links.json`;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -110,15 +108,10 @@ async function syncChain(books, baseText) {
     if (staple) staples.push(staple);
   }
   staples.sort((a, b) => a.timeMs - b.timeMs);
-  const newest = rows.length > 0 ? rows[0].voteStaple.blocksHash.toString() : "";
-  const named = await creditStaples(books, staples, {
-    newest,
-    links: readLinks(linksPath),
-    ingest: ingestSafe,
-    now: Date.now(),
-  });
-  if (named === "halt-reserve") return "halt-reserve";
-  if (named === "retry") return books.share.lastMs;
+  for (const staple of staples) {
+    if (ingestSafe(books, staple) === "halt-reserve") return "halt-reserve";
+  }
+  if (rows.length > 0) books.cursor = rows[0].voteStaple.blocksHash.toString();
   const chainMs = staples.reduce((max, staple) => Math.max(max, staple.timeMs), books.share.lastMs);
   return chainMs;
 }
@@ -151,12 +144,6 @@ function recordedKoreFloor() {
   }
 }
 
-if (process.argv.includes("--dry-run")) {
-  const { runDry } = await import("./pay-dry.mjs");
-  runDry(process.argv);
-  process.exit(0);
-}
-
 if (existsSync(`${dir}/STOP`) || existsSync(`${dir}/HALT`)) {
   console.log("Stop file present. Not running.");
   process.exit(0);
@@ -186,7 +173,26 @@ async function finishSignedBlock() {
   const pending = await client.pendingBlock();
   if (!pending) return false;
   console.log("Finishing the block already signed.");
-  await client.recover(true);
+  const when = pending.date instanceof Date ? pending.date.getTime() : Date.parse(String(pending.date));
+  if (Number.isFinite(when) && Date.now() - when > 6 * 60 * 1000) {
+    console.log("Leaving the expired block. It cannot gather enough votes.");
+    return false;
+  }
+  try {
+    await client.recover(true, {
+      generateFeeBlock: async (staple) => {
+        const builder = client.initBuilder();
+        return builder.computeFeeBlock(staple);
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown";
+    if (message.includes("enough voting power") || message.includes("INSUFFICIENT_VOTING_WEIGHT")) {
+      console.log("Leaving the short block. It cannot gather enough votes.");
+      return false;
+    }
+    throw err;
+  }
   return true;
 }
 
@@ -206,19 +212,33 @@ function halt(reason) {
   process.exit(0);
 }
 
+function holdPayouts(reason) {
+  const path = `${dir}/PAYHOLD`;
+  if (!existsSync(path)) console.error("KORE sends wait.", reason, "Mining continues.");
+  writeFileSync(path, `${reason}\n`);
+}
+
 function settlePayout(koreBal) {
   const intent = readIntent();
   if (!intent) return "none";
   const verdict = judgeIntent(koreBal, intent);
-  if (verdict === "halt") return "halt";
+  if (verdict === "hold") {
+    holdPayouts("Balance does not match this payout.");
+    return "hold";
+  }
   if (verdict === "missed") {
+    try { unlinkSync(`${dir}/PAYHOLD`); } catch { /* none */ }
     clearFloor(BigInt(intent.floor));
     clearIntent();
     console.log("KORE send did not land. Nothing was marked paid.");
     return "missed";
   }
   const applied = applyPaid(books.share, intent);
-  if (applied === "halt") return "halt";
+  if (applied === "halt") {
+    holdPayouts("The books do not match this payout.");
+    return "hold";
+  }
+  try { unlinkSync(`${dir}/PAYHOLD`); } catch { /* none */ }
   saveBooks(books);
   clearIntent();
   console.log("Paid", intent.amount, "KORE to", intent.from);
@@ -247,6 +267,7 @@ function beginClose(now) {
 }
 
 async function payOne(wallet) {
+  if (existsSync(`${dir}/PAYHOLD`)) return "skip";
   if (readIntent()) return "pending";
   beginClose(Date.now());
   if (!state.closeOpen) return "skip";
@@ -277,6 +298,8 @@ async function payOne(wallet) {
   const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.payoutFee ?? FEE_PER_TX });
   if (!judged.ok) {
     state.payoutFee = judged.learn;
+    state.done = Array.isArray(state.done) ? state.done : [];
+    if (!state.done.includes(row.from)) state.done.push(row.from);
     writeState(state);
     console.log(judged.reason === "reserve" ? "KORE waiting. Fee would spend the reserve." : "Skip KORE. Quote", kta(fee), "KTA.");
     return "skip";
@@ -286,7 +309,10 @@ async function payOne(wallet) {
   const koreBal = await client.balance(kore);
   const floor = floorAfter(koreBal, row.amount);
   if (floor === null) {
-    console.log("Skip KORE. Amount does not fit.");
+    state.done = Array.isArray(state.done) ? state.done : [];
+    if (!state.done.includes(row.from)) state.done.push(row.from);
+    writeState(state);
+    console.log("Skip KORE. Amount does not fit.", row.from);
     return "skip";
   }
   const intent = { from: row.from, amount: row.amount.toString(), key: row.key, floor: floor.toString() };
@@ -330,9 +356,9 @@ while (!existsSync(`${dir}/STOP`)) {
     const status = reconcile(books, balance, chain, Date.now());
     saveBooks(books);
     try {
-      if (applyLinks(books, readLinks(linksPath))) saveBooks(books);
+      if (applyClaimFile(books, dir)) saveBooks(books);
     } catch (err) {
-      console.error("Link skipped.", err instanceof Error ? err.message : "unknown");
+      console.error("Claim skipped.", err instanceof Error ? err.message : "unknown");
     }
     if (status === "halt-reserve") {
       writeFileSync(`${dir}/HALT`, "burn would spend the reserve\n");
@@ -340,28 +366,30 @@ while (!existsSync(`${dir}/STOP`)) {
       process.exit(0);
     }
     const settled = settlePayout(await client.balance(kore));
-    if (settled === "halt") halt("KORE left with no recorded payout");
     if (settled === "paid") koreStart = await client.balance(kore);
-    if (status !== "ok") {
-      console.log("Books", status, "Balance", kta(balance), "KTA.");
+    const picksWait = status !== "ok";
+    const closeWaits = picksWait && status !== "missing-deposit" && status !== "waiting-burn";
+    let wallet = balance;
+    if (!closeWaits) {
+      const armed = sendArmed();
+      if (armed !== sendOn) {
+        sendOn = armed;
+        console.log(sendOn ? "KORE send armed." : "KORE send is off.");
+        saveBooks(books);
+      }
+      if (sendOn && settled !== "hold") {
+        const paid = await payOne(wallet);
+        if (paid === "halt" || paid === "hold") console.error("KORE sends wait. Mining continues.");
+        if (paid === "paid") {
+          wallet = await client.balance(base);
+          koreStart = await client.balance(kore);
+        }
+      }
+    }
+    if (picksWait) {
+      console.log("Books", status, "Balance", kta(balance), "KTA.", status === "missing-deposit" || status === "waiting-burn" ? "Picks wait." : "Payouts wait.");
       await sleep(10000);
       continue;
-    }
-
-    const armed = sendArmed();
-    if (armed !== sendOn) {
-      sendOn = armed;
-      console.log(sendOn ? "KORE send armed." : "KORE send is off.");
-      saveBooks(books);
-    }
-    let wallet = balance;
-    if (sendOn) {
-      const paid = await payOne(wallet);
-      if (paid === "halt") halt("KORE left with no recorded payout");
-      if (paid === "paid") {
-        wallet = await client.balance(base);
-        koreStart = await client.balance(kore);
-      }
     }
 
     const remaining = state.windowStart + DAY_MS - Date.now();
@@ -445,9 +473,7 @@ while (!existsSync(`${dir}/STOP`)) {
         console.log("KORE payout recorded. Floor", koreNow.toString());
         koreStart = koreNow;
       } else {
-        writeFileSync(`${dir}/HALT`, "KORE left with no recorded payout\n");
-        console.error("HALT. KORE left with no recorded payout.");
-        process.exit(0);
+        holdPayouts("KORE moved without a matching payout.");
       }
     }
     if (elapsed < plan.intervalMs) await sleep(plan.intervalMs - elapsed);
