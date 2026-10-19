@@ -42,8 +42,8 @@
   <label>Keeta address that should receive the KORE</label>
   <input id="keeta" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder="keeta_...">
   <div class="warn">
-    <strong>Check the Keeta address. This cannot be undone.</strong>
-    <p>Your latest signed link wins. To change the Keeta address, sign again with the same Base wallet. If that keeta_ address is wrong, the KORE is still paid there. Payment is not instant. It can take an additional 24 hours.</p>
+    <strong>Check the Keeta address before you sign.</strong>
+    <p>Your latest signed link wins. To change the Keeta address, sign again with the same Base wallet. KORE already paid can't be moved back, so a wrong keeta_ address keeps what was sent there. Payment is not instant. It can take an additional 24 hours.</p>
   </div>
   <button id="go" type="button" disabled>Sign the claim</button>
   <p class="muted" id="out"></p>
@@ -108,7 +108,7 @@ document.getElementById("go").onclick = async () => {
     return;
   }
   if (!window.ethereum) { out.textContent = "Open this page in the Base wallet's browser."; return; }
-  const sure = confirm("KORE goes to " + keeta + ".\n\nA wrong Keeta address cannot be undone.\nPayment can take an additional 24 hours.\n\nSign this claim?");
+  const sure = confirm("KORE goes to " + keeta + ".\n\nKORE already paid to a wrong Keeta address can't be moved back.\nPayment can take an additional 24 hours.\n\nSign this claim?");
   if (!sure) { out.textContent = "Not signed."; return; }
   const nonce = crypto.randomUUID();
   const date = new Date().toISOString().slice(0, 10);
@@ -127,7 +127,7 @@ document.getElementById("go").onclick = async () => {
     });
     const result = await response.json();
     out.textContent = result.ok
-      ? "Signed. Nothing moved on Base. Whole KORE will be paid to " + keeta + ". This cannot be undone. Payment can take an additional 24 hours."
+      ? "Signed. Nothing moved on Base. Whole KORE will be paid to " + keeta + ". To change the address later, sign again with the same Base wallet. Payment can take an additional 24 hours."
       : "Not accepted. " + (result.reason || "Try again.");
   } catch (err) {
     out.textContent = err && err.code === 4001 ? "The signature was cancelled." : "The claim checker is not answering yet. The signature was not sent on Base.";

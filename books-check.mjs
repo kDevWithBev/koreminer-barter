@@ -1,6 +1,8 @@
 import { startMs } from "./ledger.mjs";
 import { accounted, booksFromJson, booksToJson, createBooks, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { readStaple } from "./chain.mjs";
+import { applyPaid, choosePayout } from "./pay.mjs";
+import { accrue, createShare, deposit, whole } from "./share.mjs";
 
 const DAY = 86_400_000;
 const open = startMs;
@@ -95,5 +97,53 @@ function burnWait() { return 120_000; }
 function id(value) { return { publicKeyString: { toString: () => value } }; }
 function intake() { return "keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa"; }
 function sink() { return "keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq"; }
+
+const live = createShare(open);
+deposit(live, "keeta_alice", kta(10), open);
+deposit(live, "keeta_bob", kta(30), open);
+accrue(live, open + DAY);
+const rawLive = {
+  lastMs: live.lastMs,
+  reserve: live.reserve.toString(),
+  operator: "0",
+  cursor: "cursor-live",
+  recent: [],
+  pendingDrops: [],
+  pendingSince: 0,
+  arm: open,
+  lots: live.lots.map((lot) => ({ from: lot.from, remaining: lot.remaining.toString() })),
+  stake: Object.fromEntries([...live.stake].map(([key, value]) => [key, value.toString()])),
+  pending: Object.fromEntries([...live.pending].map(([key, value]) => [key, value.toString()])),
+  paid: Object.fromEntries([...live.paid].map(([key, value]) => [key, value.toString()])),
+  depth: Object.fromEntries([...live.depth].map(([key, value]) => [key, value.toString()])),
+  seen: [...live.seen.keys()],
+  streak: Object.fromEntries([...live.streak]),
+};
+const loaded = booksFromJson(rawLive);
+const chosen = choosePayout(loaded.share, { intake: intake(), sink: sink() });
+const planned = payoutPlan(loaded).rows.find((row) => row.from === chosen.from);
+const counted = whole(loaded.share.pending.get(chosen.from));
+check("the plan key matches the payout key", planned.key === chosen.key && chosen.key === `kore-${chosen.from}-${counted}` && !chosen.key.includes("kore:"));
+const payState = { done: [] };
+const payIntent = { from: chosen.from, amount: chosen.amount.toString(), key: chosen.key, floor: "1" };
+check("one payout is marked", applyPaid(loaded.share, payIntent) === "marked");
+if (!payState.done.includes(payIntent.from)) payState.done.push(payIntent.from);
+const reloaded = booksFromJson(booksToJson(loaded));
+const again = choosePayout(reloaded.share, { intake: intake(), sink: sink(), skip: payState.done });
+const unskipped = choosePayout(reloaded.share, { intake: intake(), sink: sink() });
+check("a paid wallet is not chosen again", again?.from !== payIntent.from && unskipped?.from !== payIntent.from);
+check("paid and done survive the reload", reloaded.share.paid.get(payIntent.from) === BigInt(payIntent.amount) && payState.done.includes(payIntent.from));
+check("the payout key is unchanged", `kore-${payIntent.from}-${whole(reloaded.share.pending.get(payIntent.from))}` === payIntent.key);
+
+const stripped = booksToJson(reloaded);
+delete stripped.parked;
+delete stripped.unresolved;
+delete stripped.used;
+delete stripped.lookupSince;
+const old = booksFromJson(stripped);
+check("an old books file loads", old.parked === 0n && old.unresolved.length === 0 && old.used.length === 0 && Object.keys(old.lookupSince).length === 0);
+check("an old books file reconciles", reconcile(old, accounted(old), old.share.lastMs, old.share.lastMs) === "ok");
+const round = booksFromJson(booksToJson(old));
+check("an old books file round-trips", accounted(round) === accounted(old) && round.cursor === old.cursor && round.parked === 0n && round.unresolved.length === 0);
 
 console.log("books ok");
