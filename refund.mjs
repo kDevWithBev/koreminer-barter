@@ -535,18 +535,25 @@ function defaultProcesses(root = "/proc") {
     if (!/^\d+$/.test(pid)) continue;
     let argvText;
     try { argvText = readFileSync(`${root}/${pid}/cmdline`); }
-    catch {
-      const err = new Error("process list unreadable");
-      err.name = "ProcessListUnreadable";
-      throw err;
+    catch (err) {
+      if (err?.code === "ENOENT" || err?.code === "ESRCH") continue; // GUARD:F1-vanished
+      const refused = new Error("process list unreadable");
+      refused.name = "ProcessListUnreadable";
+      throw refused; // GUARD:F1-eacces
     }
     const argv = Buffer.from(argvText).toString("utf8").split("\0").filter(Boolean);
+    if (argv.length === 0) continue; // GUARD:F1-zombie
+    // Empty command lines were skipped above, so they do not reach the cwd read.
+    if (argv.length > 0 && !argv.some((arg) => arg.split("/").pop() === "run.mjs")) { // GUARD:F1-other-cwd
+      found.push({ pid, argv });
+      continue;
+    }
     let cwd;
     try { cwd = readlinkSync(`${root}/${pid}/cwd`); }
     catch {
       const err = new Error("process list unreadable");
       err.name = "ProcessListUnreadable";
-      throw err;
+      throw err; // GUARD:F1-run-cwd
     }
     found.push({ pid, argv, cwd });
   }
@@ -942,7 +949,14 @@ async function main(deps = {}) {
 
   const stateAgain = await valueOf(systemctl);
   if (stateAgain !== "inactive" && stateAgain !== "failed") return refuse("runner is active"); // GUARD:R4-recheck
-  if (((await valueOf(processes)) ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:R4-recheck
+  let procsAgain;
+  try {
+    procsAgain = deps.processes !== undefined ? await valueOf(processes) : defaultProcesses(deps.procRoot); // GUARD:F2
+  } catch (err) {
+    if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:F2
+    throw err;
+  }
+  if ((procsAgain ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:R4-recheck
   let pendingAgain;
   try { pendingAgain = await client.pendingBlock(); }
   catch { return refuse("a block is already pending"); }
@@ -1037,6 +1051,10 @@ async function main(deps = {}) {
   return 3;
   } catch (err) {
     const name = err instanceof Error && err.name ? err.name : "Error";
+    if (mode === "verify") { // GUARD:F3
+      say(`REFUND_VERIFY: UNKNOWN unexpected ${name}`);
+      return 3;
+    }
     if (stopOpen) { // GUARD:S3-after
       say(`REFUND_HOLD: unexpected ${name}`);
       return 3;

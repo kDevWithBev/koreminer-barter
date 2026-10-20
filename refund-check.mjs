@@ -417,7 +417,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   const wrongCount = await run({ argv: sendArgv(info, { n: "13" }) });
   const wrongPlan = await run({ argv: sendArgv(info, { plan: `${info.plan.slice(0, -1)}0` }) });
   for (const [name, result] of [["total flag", missingTotal], ["count flag", missingCount], ["plan flag", missingPlan], ["total", wrongTotal], ["count", wrongCount], ["plan", wrongPlan]]) {
-    check(`T10 ${name} is refused`, result.code === 2 && result.counts.publish === 0 && result.counts.quotes === 0 && result.counts.builds === 0 && has(result.lines, "REFUND_REFUSED:"));
+    check(`T10 ${name} is refused`, result.code === 2 && result.counts.publish === 0 && result.counts.quotes === 0 && result.counts.builds === 0 && result.counts.init === 0 && has(result.lines, "REFUND_REFUSED:"));
   }
 }
 
@@ -1039,16 +1039,33 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   const missingRoot = join(tmpdir(), "kore-proc-missing-refund");
   const missing = await run({ argv: ["--no-quote"], useProc: true, procRoot: missingRoot });
   check("N3 an unreadable process list is refused", missing.code === 2 && missing.counts.quotes === 0 && has(missing.lines, "REFUND_REFUSED: process list unreadable"));
-  const bareRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
-  mkdirSync(join(bareRoot, "4"));
-  const bare = await run({ argv: ["--no-quote"], useProc: true, procRoot: bareRoot });
-  check("N3 an unreadable cmdline is refused", bare.code === 2 && has(bare.lines, "process list unreadable"));
+  const zombieRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(zombieRoot, "3"));
+  writeFileSync(join(zombieRoot, "3", "cmdline"), "");
+  writeFileSync(join(zombieRoot, "3", "cwd"), "not-a-link");
+  const zombie = await run({ argv: ["--no-quote"], useProc: true, procRoot: zombieRoot });
+  check("F1 a zombie with an empty cmdline is skipped", zombie.code === 0 && !has(zombie.lines, "process list unreadable"));
+  const goneRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(goneRoot, "4"));
+  const gone = await run({ argv: ["--no-quote"], useProc: true, procRoot: goneRoot });
+  check("F1 a pid that vanishes is skipped", gone.code === 0 && !has(gone.lines, "process list unreadable"));
+  const quietRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(quietRoot, "8"));
+  writeFileSync(join(quietRoot, "8", "cmdline"), "bash\0");
+  writeFileSync(join(quietRoot, "8", "cwd"), "not-a-link");
+  const quiet = await run({ argv: ["--no-quote"], useProc: true, procRoot: quietRoot });
+  check("F1 a non-node process with an unreadable cwd is not refused", quiet.code === 0 && !has(quiet.lines, "process list unreadable"));
   const nodeRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
   mkdirSync(join(nodeRoot, "7"));
   writeFileSync(join(nodeRoot, "7", "cmdline"), "node\0run.mjs\0");
   writeFileSync(join(nodeRoot, "7", "cwd"), "not-a-link");
   const nodeProc = await run({ argv: ["--no-quote"], useProc: true, procRoot: nodeRoot });
-  check("N3 an unreadable node cwd is refused", nodeProc.code === 2 && has(nodeProc.lines, "process list unreadable"));
+  check("F1 a run.mjs process with an unreadable cwd is refused", nodeProc.code === 2 && has(nodeProc.lines, "process list unreadable"));
+  const denyRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(denyRoot, "9"));
+  symlinkSync("/proc/1/mem", join(denyRoot, "9", "cmdline"));
+  const denied = await run({ argv: ["--no-quote"], useProc: true, procRoot: denyRoot });
+  check("F1 an EACCES cmdline is refused", denied.code === 2 && has(denied.lines, "REFUND_REFUSED: process list unreadable") && !denied.lines.some((line) => line.includes("permission") || line.includes("/proc/1")));
   const otherRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
   mkdirSync(join(otherRoot, "8"));
   writeFileSync(join(otherRoot, "8", "cmdline"), "bash\0");
@@ -1067,6 +1084,52 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
 }
 
 {
+  const info = await plan();
+  let seen = 0;
+  const late = await run({
+    argv: sendArgv(info),
+    processes: () => {
+      seen += 1;
+      if (seen === 1) return [];
+      const err = new Error("SECRET-RECHECK");
+      err.name = "ProcessListUnreadable";
+      throw err;
+    },
+  });
+  check("F2 an unreadable process list on the recheck is refused", late.code === 2 && has(late.lines, "REFUND_REFUSED: process list unreadable") && !has(late.lines, "SECRET-RECHECK") && !has(late.lines, "REFUND_HOLD:") && existsSync(join(late.dir, "STOP")) && !existsSync(join(late.dir, "refund", "intent.json")));
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const landed = await run({
+    argv: sendArgv(info),
+    onPublish: (_b, _o, ctx) => {
+      ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+      ctx.live.balance -= rawTotal + FEE;
+      return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+    },
+  });
+  const backup = readdirSync(landed.dir).find((name) => name.startsWith("books.json.pre-refund-"));
+  rmSync(join(landed.dir, "refund", "done.json"));
+  for (const name of readdirSync(join(landed.dir, "refund"))) {
+    if (name.startsWith("receipt-")) rmSync(join(landed.dir, "refund", name));
+  }
+  copyFileSync(join(landed.dir, backup), landed.booksPath);
+  const mid = await landed.again(["--verify"], {
+    fs: {
+      copyFileSync() {
+        const err = new Error("SECRET-VERIFY");
+        err.name = "BoomVerify";
+        throw err;
+      },
+    },
+  });
+  const started = readdirSync(join(landed.dir, "refund")).some((name) => name.startsWith("receipt-") || name === "done.json");
+  check("F3 an unexpected verify error is UNKNOWN", mid.code === 3 && has(mid.lines, "REFUND_VERIFY: UNKNOWN unexpected BoomVerify") && !has(mid.lines, "SECRET-VERIFY") && !has(mid.lines, "REFUND_REFUSED:") && started);
+}
+
+{
   const objectBalance = await run({ argv: ["--no-quote"], onBalance: () => ({ amount: 1n }) });
   check("N5 an object balance is refused", objectBalance.code === 2 && has(objectBalance.lines, "balance read failed"));
   const numberBalance = await run({ argv: ["--no-quote"], onBalance: () => 1 });
@@ -1077,7 +1140,11 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
 }
 
 {
-  const { registerHooks } = await import("node:module");
+  const nodeModule = await import("node:module");
+  if (typeof nodeModule.registerHooks !== "function") {
+    console.log("skip T27 (registerHooks needs Node 22.15+)");
+  } else {
+  const { registerHooks } = nodeModule;
   const { pathToFileURL } = await import("node:url");
   registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -1188,6 +1255,7 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   } finally {
     sdk.UserClient.fromNetwork = realFrom;
     globalThis.fetch = previousFetch;
+  }
   }
 }
 

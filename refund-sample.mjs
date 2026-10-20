@@ -36,7 +36,9 @@ function stage() {
     async getHistory() { return live.history; },
     async getQuotes() { return quotes; },
     async publishBuilder(_builder, options) {
-      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: quotes });
+      const votes = quotes;
+      const blocks = [];
+      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes, blocks }, options);
       if (live.onPublish) return live.onPublish();
       return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(live.hash) }] } };
     },
