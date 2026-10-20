@@ -401,10 +401,9 @@ function settlePayout(koreBal) {
     const spendable = wallet > RESERVE ? wallet - RESERVE : 0n;
     const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX });
     if (!judged.ok) {
-      if (judged.reason !== "cap") {
-        state.done = Array.isArray(state.done) ? state.done : [];
-        if (!state.done.includes(row.from)) state.done.push(row.from);
-      }
+      if (judged.reason === "cap") throw new FeeOverCap(fee, bundleCap());
+      state.done = Array.isArray(state.done) ? state.done : [];
+      if (!state.done.includes(row.from)) state.done.push(row.from);
       writeState(state);
       console.log(judged.reason === "reserve" ? "KORE waiting. Fee would spend the reserve." : "Skip KORE. Quote", kta(fee), "KTA.");
       return "skip";
@@ -565,6 +564,7 @@ function settlePayout(koreBal) {
         feePerTx: state.feePerTx,
       });
       if (!judged.ok) {
+        if (judged.reason === "cap") throw new FeeOverCap(total, bundleCap());
         state.feePerTx = judged.learn;
         writeState(state);
         console.log(judged.reason === "reserve" ? "Quote would spend the payout reserve. Quote" : "Skip. Quote", kta(total), "KTA. Ops", ops);
