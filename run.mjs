@@ -277,8 +277,13 @@ export async function runShaft({
     const intent = readIntent();
     if (!intent) return;
     const koreBal = await client.balance(kore);
-    if (judgeIntent(koreBal, intent) === "paid") {
+    const verdict = judgeIntent(koreBal, intent);
+    if (verdict === "paid") {
       if (settlePayout(koreBal) === "paid") koreStart = await client.balance(kore);
+      return;
+    }
+    if (verdict !== "missed") {
+      holdPayouts("Balance does not match this payout.");
       return;
     }
     if (!state.done.includes(intent.from)) state.done.push(intent.from);
