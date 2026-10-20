@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, judgeQuote, kta, minPublishGapMs, pace, voteFeeTotal } from "./pace.mjs";
+import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, judgeQuote, kta, minPublishGapMs, pace } from "./pace.mjs";
 import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
@@ -91,12 +91,56 @@ export async function runShaft({
     writeState(state);
   }
 
+  function isKtaFee(token) {
+    if (token === undefined || token === null || token === "") return true;
+    if (token === base) return true;
+    const text = feeTokenText(token);
+    if (!text) return false;
+    if (baseText && text === baseText) return true;
+    if (base?.id && text === base.id) return true;
+    const baseKey = base?.publicKeyString;
+    if (typeof baseKey?.toString === "function" && text === baseKey.toString()) return true;
+    return false;
+  }
+
+  function feeTokenText(token) {
+    if (typeof token === "string") return token;
+    if (typeof token?.id === "string") return token.id;
+    const key = token?.publicKeyString;
+    if (typeof key?.toString === "function") {
+      const text = key.toString();
+      if (text && text !== "[object Object]") return text;
+    }
+    if (typeof key?.get === "function") {
+      const text = key.get();
+      if (typeof text === "string") return text;
+    }
+    return "";
+  }
+
+  function ktaAndForeign(staple) {
+    let ktaFee = 0n;
+    let foreign = 0n;
+    for (const vote of staple?.votes ?? []) {
+      const fee = vote?.fee;
+      if (fee === undefined || fee === null) continue;
+      const fees = Array.isArray(fee) ? fee : [fee];
+      for (const item of fees) {
+        if (item?.amount === undefined || item?.amount === null) continue;
+        const amount = BigInt(item.amount);
+        if (isKtaFee(item.token)) ktaFee += amount;
+        else foreign += amount;
+      }
+    }
+    return { ktaFee, foreign };
+  }
+
   function cappedFeeBlock() {
     return async (staple) => {
-      const fee = voteFeeTotal(staple);
+      const { ktaFee, foreign } = ktaAndForeign(staple);
       const cap = bundleCap();
-      if (fee > cap) throw new FeeOverCap(fee, cap);
-      paidFee = fee;
+      if (foreign > 0n || ktaFee > cap) throw new FeeOverCap(foreign > 0n ? ktaFee + foreign : ktaFee, cap);
+      paidFee = ktaFee;
       const builder = client.initBuilder();
       return builder.computeFeeBlock(staple);
     };

@@ -45,6 +45,7 @@ export function makeClient(books, options = {}) {
     pickQuote: options.pickQuote ?? fromKta("0.006"),
     payoutQuote: options.payoutQuote ?? fromKta("0.00404"),
     voteFee: options.voteFee === undefined ? null : options.voteFee,
+    customVotes: options.customVotes ?? null,
     pending: options.pending ?? null,
     publishes: [],
     feeBlockBuilds: 0,
@@ -72,6 +73,10 @@ export function makeClient(books, options = {}) {
       const payout = (block?.operations ?? []).some((op) => op.token?.id === "kore");
       return payout ? client.payoutQuote : client.pickQuote;
     },
+    votesOf(payout) {
+      if (typeof client.customVotes === "function") return client.customVotes({ payout });
+      return votesFor(client.voteTotal(payout));
+    },
     voteTotal(payout) {
       const chosen = typeof client.voteFee === "function" ? client.voteFee({ payout }) : client.voteFee;
       if (chosen === null || chosen === undefined) return payout ? client.payoutQuote : client.pickQuote;
@@ -88,7 +93,7 @@ export function makeClient(books, options = {}) {
     async pendingBlock() { return client.pending; },
     async publishBuilder(builder, options) {
       const payout = builder.ops?.some((op) => op.token?.id === "kore");
-      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: votesFor(client.voteTotal(payout)) });
+      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: client.votesOf(payout) });
       if (payout) {
         const amount = BigInt(builder.ops.find((op) => op.token?.id === "kore").amount);
         client.koreBal -= amount;
@@ -102,7 +107,7 @@ export function makeClient(books, options = {}) {
     async recover(publish, options) {
       client.recoverCalls += 1;
       if (client.recoverError) throw client.recoverError;
-      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: votesFor(client.voteTotal(false)) });
+      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: client.votesOf(false) });
       if (publish !== false) {
         client.publishes.push({ kind: "recover" });
         client.pending = null;
