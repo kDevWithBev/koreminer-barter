@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace, payoutFeeBudget, payoutFeeCap, picksOff } from "./pace.mjs";
-import { RESERVE, due } from "./share.mjs";
+import { RESERVE, accrue, due } from "./share.mjs";
+import { dayStart } from "./ledger.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
 import { applyPaid, choosePayout, floorAfter, judgeIntent } from "./pay.mjs";
@@ -141,6 +142,10 @@ export async function runShaft({
   const floorPath = `${dir}/kore-floor.txt`;
   const lookupPath = `${dir}/lookup.json`;
   const linksPath = `${dir}/links.json`;
+  const closeAccrue = process.env.CLOSE_ACCRUE === "1";
+  let chainRetry = false;
+  let closeCreditGaveUp = false;
+  let closeCreditWaitAt = null;
 
   let overCapStep = null;
   let refusedFeesNoted = false;
@@ -431,6 +436,7 @@ export async function runShaft({
   }
 
   async function syncChain(books) {
+    chainRetry = false;
     const rows = await pullNew(client, books.cursor);
     const staples = [];
     for (const row of rows) {
@@ -446,7 +452,10 @@ export async function runShaft({
       now: now(),
     });
     if (named === "halt-reserve") return "halt-reserve";
-    if (named === "retry") return books.share.lastMs;
+    if (named === "retry") {
+      chainRetry = true;
+      return books.share.lastMs;
+    }
     const chainMs = staples.reduce((max, staple) => Math.max(max, staple.timeMs), books.share.lastMs);
     return chainMs;
   }
@@ -763,6 +772,7 @@ export async function runShaft({
 
   console.log(configLine());
   console.log("Runner up. Pace follows fuel. Ceiling 17/s. Reserve", kta(RESERVE), "KTA.", sendArmed() ? "KORE send is armed." : "KORE send is off.");
+  console.log(closeAccrue ? "Close accrue on" : "Close accrue off");
   console.log("Dust sink:", sink);
   console.log("KORE:", koreStart.toString());
 
@@ -826,9 +836,49 @@ function settlePayout(koreBal) {
     }
   }
 
-  async function payOne(wallet) {
+  function pendingTotal(share) {
+    let sum = 0n;
+    for (const amount of share.pending.values()) sum += amount;
+    return sum;
+  }
+
+  function kore6(units) {
+    const neg = units < 0n;
+    const value = neg ? -units : units;
+    const whole = value / 1_000_000_000_000n;
+    const frac = (value % 1_000_000_000_000n).toString().padStart(12, "0").slice(0, 6);
+    return `${neg ? "-" : ""}${whole.toString()}.${frac}`;
+  }
+
+  async function payOne(wallet, status, chainRetry) {
     if (existsSync(`${dir}/PAYHOLD`)) return "skip";
     if (readIntent()) return "pending";
+    if (closeAccrue) {
+      const edge = dayStart(now());
+      const at = now();
+      if (books.share.lastMs >= edge) {
+        // Already credited, or a real staple landed after the edge.
+      } else if (at - edge < 120_000) {
+        return "skip";
+      } else if (at - edge >= 30 * 60 * 1000) {
+        if (!closeCreditGaveUp) {
+          closeCreditGaveUp = true;
+          console.log("Close credit skipped. Normal close.");
+        }
+      } else if (status !== "ok" || chainRetry) {
+        if (closeCreditWaitAt === null || at - closeCreditWaitAt >= 60_000) {
+          closeCreditWaitAt = at;
+          console.log(`Close credit waits. Books ${status}.`);
+        }
+        return "skip";
+      } else {
+        const before = pendingTotal(books.share);
+        accrue(books.share, edge);
+        const credited = pendingTotal(books.share) - before;
+        saveBooks(books);
+        console.log(`Close credit to ${new Date(edge).toISOString()}. KORE ${kore6(credited)}.`);
+      }
+    }
     beginClose(now());
     if (!state.closeOpen) return "skip";
     const row = choosePayout(books.share, { intake, sink, skip: state.done });
@@ -1016,7 +1066,7 @@ function settlePayout(koreBal) {
         }
         if (sendOn && settled !== "hold") {
           const mark = state.lastPublishMs;
-          const paid = await payOne(wallet);
+          const paid = await payOne(wallet, status, chainRetry);
           justSent = state.lastPublishMs !== mark;
           if (paid === "halt" || paid === "hold") console.error("KORE sends wait. Mining continues.");
           if (paid === "paid") {
