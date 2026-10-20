@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace, picksOff } from "./pace.mjs";
+import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace, payoutFeeBudget, payoutFeeCap, picksOff } from "./pace.mjs";
 import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
@@ -159,11 +159,10 @@ export async function runShaft({
     return { ktaFee, foreign };
   }
 
-  function cappedFeeBlock() {
+  function cappedFeeBlock(cap = bundleCap()) {
     const taken = { fee: 0n, used: false };
     const generateFeeBlock = async (staple) => {
       const { ktaFee, foreign } = ktaAndForeign(staple);
-      const cap = bundleCap();
       if (foreign > 0n || ktaFee > cap) throw new FeeOverCap(foreign > 0n ? ktaFee + foreign : ktaFee, cap);
       taken.fee = ktaFee;
       taken.used = true;
@@ -173,11 +172,10 @@ export async function runShaft({
     return { generateFeeBlock, taken };
   }
 
-  async function publishCapped(builder, quotes) {
+  async function publishCapped(builder, quotes, cap = bundleCap()) {
     const quoted = quotesFee(quotes);
-    const cap = bundleCap();
     if (quoted > cap) throw new FeeOverCap(quoted, cap);
-    const { generateFeeBlock, taken } = cappedFeeBlock();
+    const { generateFeeBlock, taken } = cappedFeeBlock(cap);
     const result = await client.publishBuilder(builder, { generateFeeBlock, quotes });
     return { result, fee: taken.used ? taken.fee : 0n };
   }
@@ -187,6 +185,16 @@ export async function runShaft({
     try { fee = BigInt(value ?? FEE_PER_TX); } catch { return FEE_PER_TX; }
     if (fee <= 0n || fee > bundleCap() / 50n) return FEE_PER_TX;
     return fee;
+  }
+
+  function clampPayoutSpent(value) {
+    try {
+      const spent = BigInt(value ?? "0");
+      if (spent < 0n) return 0n;
+      return spent;
+    } catch {
+      return 0n;
+    }
   }
 
   function readState() {
@@ -200,9 +208,11 @@ export async function runShaft({
         done: Array.isArray(saved.done) ? saved.done.filter((item) => typeof item === "string") : [],
         closeOpen: saved.closeOpen === true,
         lastPublishMs: Number(saved.lastPublishMs) || 0,
+        payoutFeeDay: typeof saved.payoutFeeDay === "string" ? saved.payoutFeeDay : "",
+        payoutFeeSpent: clampPayoutSpent(saved.payoutFeeSpent),
       };
     } catch {
-      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0 };
+      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0, payoutFeeDay: "", payoutFeeSpent: 0n };
     }
   }
 
@@ -289,9 +299,20 @@ export async function runShaft({
       done: state.done ?? [],
       closeOpen: state.closeOpen === true,
       lastPublishMs: state.lastPublishMs || 0,
+      payoutFeeDay: state.payoutFeeDay ?? "",
+      payoutFeeSpent: (state.payoutFeeSpent ?? 0n).toString(),
     });
     writeFileSync(`${statePath}.tmp`, body);
     renameSync(`${statePath}.tmp`, statePath);
+  }
+
+  function rollPayoutFeeDay() {
+    const today = new Date(now()).toISOString().slice(0, 10);
+    state.payoutFeeSpent = clampPayoutSpent(state.payoutFeeSpent);
+    if (state.payoutFeeDay === today) return;
+    state.payoutFeeDay = today;
+    state.payoutFeeSpent = 0n;
+    writeState(state);
   }
 
   function recordedKoreFloor() {
@@ -305,6 +326,7 @@ export async function runShaft({
   }
 
   let state = readState();
+  rollPayoutFeeDay();
   const books = loadBooks();
   writeState(state);
   let blockNo = 0;
@@ -479,14 +501,32 @@ function settlePayout(koreBal) {
     const quotes = await client.getQuotes(built.blocks);
     const fee = quotesFee(quotes);
     const spendable = wallet > RESERVE ? wallet - RESERVE : 0n;
-    const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX });
+    const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX, cap: payoutFeeCap() });
     if (!judged.ok) {
-      if (judged.reason === "cap") throw new FeeOverCap(fee, bundleCap());
+      if (judged.reason === "cap") {
+        const line = `ALERT Payout fee ${kta(fee)} KTA is over the ${kta(payoutFeeCap())} KTA payout cap. Payout stays queued.`;
+        if (line !== payoutBlockNoted) {
+          payoutBlockNoted = line;
+          console.error(line);
+        }
+        await sleep(30000);
+        return "queued";
+      }
       state.done = Array.isArray(state.done) ? state.done : [];
       if (!state.done.includes(row.from)) state.done.push(row.from);
       writeState(state);
       console.log(judged.reason === "reserve" ? "KORE waiting. Fee would spend the reserve." : "Skip KORE. Quote", kta(fee), "KTA.");
       return "skip";
+    }
+    rollPayoutFeeDay();
+    if (state.payoutFeeSpent + fee > payoutFeeBudget()) {
+      const line = `ALERT Payout fee budget for today is used up (${kta(state.payoutFeeSpent)} of ${kta(payoutFeeBudget())} KTA). Payouts wait until the next UTC day.`;
+      if (line !== payoutBlockNoted) {
+        payoutBlockNoted = line;
+        console.error(line);
+      }
+      await sleep(30000);
+      return "queued";
     }
     const koreBal = await client.balance(kore);
     const floor = floorAfter(koreBal, row.amount);
@@ -501,9 +541,14 @@ function settlePayout(koreBal) {
     writeJson(intentPath, intent);
     writeFileSync(floorPath, `${floor.toString()}\n`, { mode: 0o600 });
     try {
-      const published = await publishCapped(builder, quotes);
+      const published = await publishCapped(builder, quotes, payoutFeeCap());
       clearEpisode();
+      const charged = published.fee > 0n ? published.fee : fee;
+      rollPayoutFeeDay();
+      state.payoutFeeSpent += charged;
       notePublish();
+      payoutBlockNoted = "";
+      console.log(`Payout fee ${kta(charged)} KTA. Today ${kta(state.payoutFeeSpent)} KTA.`);
       const left = await client.balance(base);
       const remaining = state.windowStart + DAY_MS - now();
       const planNow = pace({ balance: left, remainingMs: remaining, reserve: RESERVE, feePerTx: state.feePerTx ?? FEE_PER_TX });
@@ -527,6 +572,7 @@ function settlePayout(koreBal) {
   let sendOn = sendArmed();
   let ran = 0;
   let picksOffNotedAt = null;
+  let payoutBlockNoted = "";
   function notePicksOff() {
     const at = now();
     if (picksOffNotedAt !== null && at - picksOffNotedAt < 10 * 60 * 1000) return;
@@ -546,10 +592,13 @@ function settlePayout(koreBal) {
           done: state.done ?? [],
           closeOpen: state.closeOpen === true,
           lastPublishMs: state.lastPublishMs || 0,
+          payoutFeeDay: state.payoutFeeDay ?? "",
+          payoutFeeSpent: state.payoutFeeSpent ?? 0n,
         };
         writeState(state);
         console.log("New day. Pace window reset.");
       }
+      rollPayoutFeeDay();
 
       const chain = await syncChain(books);
       if (chain === "halt-reserve") {

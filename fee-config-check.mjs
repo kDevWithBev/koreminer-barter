@@ -1,7 +1,7 @@
 import { bundleCap, configLine, fromKta, maxBlocksPerHour } from "./pace.mjs";
 import { makeBooks, makeClient, runCase } from "./fee-harness.mjs";
 
-const DEFAULT = "Config fee cap 0.05000 KTA. Max 60 blocks an hour. Picks on.";
+const DEFAULT = "Config fee cap 0.05000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 60 blocks an hour. Picks on.";
 let passed = 0;
 function check(name, ok, extra = "") {
   if (!ok) throw new Error(`${name}${extra ? `\n${extra}` : ""}`);
@@ -34,19 +34,19 @@ try {
   check("bad config uses the defaults", configLine() === DEFAULT && bundleCap() === fromKta("0.05") && maxBlocksPerHour() === 60, configLine());
 
   setEnv("0", "0");
-  check("a zero config keeps the default numbers and turns picks off", configLine() === "Config fee cap 0.05000 KTA. Max 60 blocks an hour. Picks off." && bundleCap() === fromKta("0.05") && maxBlocksPerHour() === 60, configLine());
+  check("a zero config keeps the default numbers and turns picks off", configLine() === "Config fee cap 0.05000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 60 blocks an hour. Picks off." && bundleCap() === fromKta("0.05") && maxBlocksPerHour() === 60, configLine());
 
   setEnv("0.5", "600");
-  check("the top of the range is not a clamp", configLine() === "Config fee cap 0.50000 KTA. Max 600 blocks an hour. Picks on." && bundleCap() === fromKta("0.5") && maxBlocksPerHour() === 600, configLine());
+  check("the top of the range is not a clamp", configLine() === "Config fee cap 0.50000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 600 blocks an hour. Picks on." && bundleCap() === fromKta("0.5") && maxBlocksPerHour() === 600, configLine());
 
   setEnv("0.6", "900");
-  check("a high config is clamped and the clamp is logged", configLine() === "Config fee cap 0.50000 KTA. Max 600 blocks an hour. (clamped from 0.60000 KTA, 900/hour) Picks on." && bundleCap() === fromKta("0.5") && maxBlocksPerHour() === 600, configLine());
+  check("a high config is clamped and the clamp is logged", configLine() === "Config fee cap 0.50000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 600 blocks an hour. (clamped from 0.60000 KTA, 900/hour) Picks on." && bundleCap() === fromKta("0.5") && maxBlocksPerHour() === 600, configLine());
 
   setEnv("9", undefined);
-  check("only a high fee cap is marked", configLine() === "Config fee cap 0.50000 KTA. Max 60 blocks an hour. (clamped from 9.00000 KTA) Picks on.", configLine());
+  check("only a high fee cap is marked", configLine() === "Config fee cap 0.50000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 60 blocks an hour. (clamped from 9.00000 KTA) Picks on.", configLine());
 
   setEnv(undefined, "1000");
-  check("only a high block rate is marked", configLine() === "Config fee cap 0.05000 KTA. Max 600 blocks an hour. (clamped from 1000/hour) Picks on.", configLine());
+  check("only a high block rate is marked", configLine() === "Config fee cap 0.05000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 600 blocks an hour. (clamped from 1000/hour) Picks on.", configLine());
 
   setEnv(undefined, undefined);
   const plainBooks = makeBooks(false);
@@ -66,7 +66,7 @@ try {
     steps: 0,
   });
   const highLines = linesOf(high.logs);
-  check("startup logs a clamp once", highLines.length === 1 && highLines[0] === "Config fee cap 0.50000 KTA. Max 600 blocks an hour. (clamped from 1.20000 KTA, 5000/hour) Picks on.", highLines.join("\n"));
+  check("startup logs a clamp once", highLines.length === 1 && highLines[0] === "Config fee cap 0.50000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 600 blocks an hour. (clamped from 1.20000 KTA, 5000/hour) Picks on.", highLines.join("\n"));
 } finally {
   if (savedCap === undefined) delete process.env.FEE_CAP_PER_BUNDLE_KTA;
   else process.env.FEE_CAP_PER_BUNDLE_KTA = savedCap;

@@ -81,6 +81,36 @@ export function minPublishGapMs(limit = maxBlocksPerHour()) {
   return Math.ceil(3_600_000 / limit);
 }
 
+function readMoney(text, fallbackText, limitText) {
+  const fallback = fromKta(fallbackText);
+  const limit = fromKta(limitText);
+  if (text === undefined || text === "") return { value: fallback, from: null };
+  try {
+    const amount = fromKta(text);
+    if (!(amount > 0n)) return { value: fallback, from: null };
+    if (amount > limit) return { value: limit, from: amount };
+    return { value: amount, from: null };
+  } catch {
+    return { value: fallback, from: null };
+  }
+}
+
+function readPayoutCap() {
+  return readMoney(process.env.PAYOUT_FEE_CAP_KTA, "0.05", "10");
+}
+
+function readPayoutBudget() {
+  return readMoney(process.env.PAYOUT_FEE_BUDGET_KTA_PER_DAY, "0.5", "100");
+}
+
+export function payoutFeeCap() {
+  return readPayoutCap().value;
+}
+
+export function payoutFeeBudget() {
+  return readPayoutBudget().value;
+}
+
 export function bundleCap() {
   return readCap().value;
 }
@@ -88,10 +118,14 @@ export function bundleCap() {
 export function configLine() {
   const cap = readCap();
   const rate = readRate();
+  const payoutCap = readPayoutCap();
+  const payoutBudget = readPayoutBudget();
   const bits = [];
   if (cap.from !== null) bits.push(`${kta(cap.from)} KTA`);
   if (rate.from !== null) bits.push(`${rate.from}/hour`);
-  let line = `Config fee cap ${kta(cap.value)} KTA. Max ${rate.value} blocks an hour.`;
+  if (payoutCap.from !== null) bits.push(`payout cap ${kta(payoutCap.from)} KTA`);
+  if (payoutBudget.from !== null) bits.push(`payout budget ${kta(payoutBudget.from)} KTA`);
+  let line = `Config fee cap ${kta(cap.value)} KTA. Payout fee cap ${kta(payoutCap.value)} KTA. Payout fee budget ${kta(payoutBudget.value)} KTA a day. Max ${rate.value} blocks an hour.`;
   if (bits.length) line += ` (clamped from ${bits.join(", ")})`;
   line += picksOff() ? " Picks off." : " Picks on.";
   return line;
@@ -120,12 +154,12 @@ export function voteFeeTotal(staple) {
   return total;
 }
 
-export function judgeQuote({ quote, ops, spendable, feePerTx = FEE_PER_TX }) {
+export function judgeQuote({ quote, ops, spendable, feePerTx = FEE_PER_TX, cap = bundleCap() }) {
   if (quote <= 0n || ops <= 0n) return { ok: false, learn: feePerTx, reason: "empty" };
   const per = quote / ops;
   if (per <= 0n) return { ok: false, learn: feePerTx, reason: "empty" };
   if (quote > spendable) return { ok: false, learn: feePerTx, reason: "reserve" };
-  if (quote > bundleCap()) return { ok: false, learn: feePerTx, reason: "cap" };
+  if (quote > cap) return { ok: false, learn: feePerTx, reason: "cap" };
   return { ok: true, learn: per, reason: "ok" };
 }
 
