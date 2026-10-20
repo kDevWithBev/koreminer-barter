@@ -101,6 +101,7 @@ export function makeClient(books, options = {}) {
     },
     async recover(publish, options) {
       client.recoverCalls += 1;
+      if (client.recoverError) throw client.recoverError;
       if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: votesFor(client.voteTotal(false)) });
       if (publish !== false) {
         client.publishes.push({ kind: "recover" });

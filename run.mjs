@@ -227,7 +227,7 @@ export async function runShaft({
     const when = blockTime(pending);
     if (Number.isFinite(when) && now() - when > 6 * 60 * 1000) {
       console.log("Leaving the expired block. It cannot gather enough votes.");
-      return false;
+      return "expired";
     }
     try {
       const blocks = Array.isArray(pending.blocks) ? pending.blocks : [];
@@ -242,15 +242,33 @@ export async function runShaft({
       const message = err instanceof Error ? err.message : "unknown";
       if (message.includes("enough voting power") || message.includes("INSUFFICIENT_VOTING_WEIGHT")) {
         console.log("Leaving the short block. It cannot gather enough votes.");
-        return false;
+        return "wait";
       }
       throw err;
     }
     return true;
   }
 
+  async function settleExpiredIntent() {
+    const intent = readIntent();
+    if (!intent) return;
+    const koreBal = await client.balance(kore);
+    if (judgeIntent(koreBal, intent) === "paid") {
+      if (settlePayout(koreBal) === "paid") koreStart = await client.balance(kore);
+      return;
+    }
+    if (!state.done.includes(intent.from)) state.done.push(intent.from);
+    try { unlinkSync(`${dir}/PAYHOLD`); } catch { /* none */ }
+    clearFloor(BigInt(intent.floor));
+    clearIntent();
+    writeState(state);
+    console.log("KORE send did not land. Nothing was marked paid.");
+  }
+
   try {
-    if (await finishSignedBlock()) console.log("Signed block is on the chain.");
+    const first = await finishSignedBlock();
+    if (first === true) console.log("Signed block is on the chain.");
+    if (first === "expired") await settleExpiredIntent();
   } catch (err) {
     if (isOverCap(err)) {
       const delay = armEpisode(err);
@@ -354,8 +372,10 @@ function settlePayout(koreBal) {
     const spendable = wallet > RESERVE ? wallet - RESERVE : 0n;
     const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX });
     if (!judged.ok) {
-      state.done = Array.isArray(state.done) ? state.done : [];
-      if (!state.done.includes(row.from)) state.done.push(row.from);
+      if (judged.reason !== "cap") {
+        state.done = Array.isArray(state.done) ? state.done : [];
+        if (!state.done.includes(row.from)) state.done.push(row.from);
+      }
       writeState(state);
       console.log(judged.reason === "reserve" ? "KORE waiting. Fee would spend the reserve." : "Skip KORE. Quote", kta(fee), "KTA.");
       return "skip";
@@ -376,7 +396,13 @@ function settlePayout(koreBal) {
       await publishCapped(builder, quotes);
       clearEpisode();
     } catch (err) {
-      if (isOverCap(err)) throw err;
+      if (isOverCap(err)) {
+        if (!(await client.pendingBlock())) {
+          clearIntent();
+          clearFloor(floor);
+        }
+        throw err;
+      }
       console.error("KORE send failed.", err instanceof Error ? err.message : "unknown");
       return "pending";
     }
@@ -428,6 +454,12 @@ function settlePayout(koreBal) {
         console.error("HALT. Burn would spend the reserve.");
         process.exit(0);
       }
+      const gate = await finishSignedBlock();
+      if (gate === "expired") await settleExpiredIntent();
+      if (gate === true || gate === "wait") {
+        if (gate === "wait") await sleep(10000);
+        continue;
+      }
       const settled = settlePayout(await client.balance(kore));
       if (settled === "paid") koreStart = await client.balance(kore);
       const picksWait = status !== "ok";
@@ -463,7 +495,12 @@ function settlePayout(koreBal) {
         continue;
       }
 
-      if (await finishSignedBlock()) continue;
+      const again = await finishSignedBlock();
+      if (again === "expired") await settleExpiredIntent();
+      if (again === true || again === "wait") {
+        if (again === "wait") await sleep(10000);
+        continue;
+      }
 
       const started = now();
       blockNo += 1;
