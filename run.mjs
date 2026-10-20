@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace } from "./pace.mjs";
 import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
@@ -750,5 +750,13 @@ async function main() {
   });
 }
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) await main();
+function startedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (startedDirectly()) await main();
