@@ -69,6 +69,14 @@ export function maxBlocksPerHour() {
   return readRate().value;
 }
 
+export function picksOff() {
+  if (process.env.PICKS_OFF === "1") return true;
+  const text = process.env.MAX_BLOCKS_PER_HOUR;
+  if (text === undefined || text === "") return false;
+  const raw = Number(text);
+  return Number.isFinite(raw) && raw === 0;
+}
+
 export function minPublishGapMs(limit = maxBlocksPerHour()) {
   return Math.ceil(3_600_000 / limit);
 }
@@ -85,6 +93,7 @@ export function configLine() {
   if (rate.from !== null) bits.push(`${rate.from}/hour`);
   let line = `Config fee cap ${kta(cap.value)} KTA. Max ${rate.value} blocks an hour.`;
   if (bits.length) line += ` (clamped from ${bits.join(", ")})`;
+  line += picksOff() ? " Picks off." : " Picks on.";
   return line;
 }
 

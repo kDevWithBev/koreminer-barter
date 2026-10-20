@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace } from "./pace.mjs";
+import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace, picksOff } from "./pace.mjs";
 import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
@@ -526,6 +526,13 @@ function settlePayout(koreBal) {
 
   let sendOn = sendArmed();
   let ran = 0;
+  let picksOffNotedAt = null;
+  function notePicksOff() {
+    const at = now();
+    if (picksOffNotedAt !== null && at - picksOffNotedAt < 10 * 60 * 1000) return;
+    picksOffNotedAt = at;
+    console.log("Picks off. Payouts only.");
+  }
   while (!existsSync(`${dir}/STOP`)) {
     if (ran >= steps) break;
     ran += 1;
@@ -580,6 +587,7 @@ function settlePayout(koreBal) {
       const picksWait = status !== "ok";
       const closeWaits = picksWait && status !== "missing-deposit" && status !== "waiting-burn";
       let wallet = balance;
+      let justSent = false;
       if (!closeWaits) {
         const armed = sendArmed();
         if (armed !== sendOn) {
@@ -588,7 +596,9 @@ function settlePayout(koreBal) {
           saveBooks(books);
         }
         if (sendOn && settled !== "hold") {
+          const mark = state.lastPublishMs;
           const paid = await payOne(wallet);
+          justSent = state.lastPublishMs !== mark;
           if (paid === "halt" || paid === "hold") console.error("KORE sends wait. Mining continues.");
           if (paid === "paid") {
             wallet = await client.balance(base);
@@ -599,6 +609,25 @@ function settlePayout(koreBal) {
       if (picksWait) {
         console.log("Books", status, "Balance", kta(balance), "KTA.", status === "missing-deposit" || status === "waiting-burn" ? "Picks wait." : "Payouts wait.");
         await sleep(10000);
+        continue;
+      }
+
+      if (picksOff()) {
+        notePicksOff();
+        const koreNow = await client.balance(kore);
+        if (koreNow > koreStart) {
+          console.log("Extra KORE ignored.", koreNow.toString());
+          koreStart = koreNow;
+        } else if (koreNow < koreStart) {
+          const floor = recordedKoreFloor();
+          if (floor !== null && koreNow === floor) {
+            console.log("KORE payout recorded. Floor", koreNow.toString());
+            koreStart = koreNow;
+          } else {
+            holdPayouts("KORE moved without a matching payout.");
+          }
+        }
+        if (!justSent) await sleep(30000);
         continue;
       }
 
