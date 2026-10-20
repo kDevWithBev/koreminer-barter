@@ -144,6 +144,8 @@ export async function runShaft({
 
   let overCapStep = null;
   let refusedFeesNoted = false;
+  let payoutBlockNoted = "";
+  const leftPickNoted = new Set();
 
   function sayPublished(ok, paceMilli, fee, spent, left, elapsed) {
     console.log(
@@ -496,22 +498,134 @@ export async function runShaft({
     return when;
   }
 
+  function pendingOperations(pending) {
+    const ops = [];
+    for (const block of Array.isArray(pending?.blocks) ? pending.blocks : []) {
+      for (const op of Array.isArray(block?.operations) ? block.operations : []) ops.push(op);
+    }
+    return ops;
+  }
+
+  function partyText(value) {
+    if (value === undefined || value === null || value === "") return "";
+    if (typeof value === "string") return value;
+    if (typeof value?.id === "string") return value.id;
+    const key = value?.publicKeyString;
+    if (typeof key?.toString === "function") {
+      const text = key.toString();
+      if (text && text !== "[object Object]") return text;
+    }
+    if (typeof key?.get === "function") {
+      const text = key.get();
+      if (typeof text === "string") return text;
+    }
+    return "";
+  }
+
+  function isKoreToken(token) {
+    if (token === koreAccount) return true;
+    if (token?.id && koreAccount?.id && token.id === koreAccount.id) return true;
+    const text = partyText(token);
+    if (!text) return false;
+    if (text === kore || text === koreAccount?.id) return true;
+    const accountKey = koreAccount?.publicKeyString;
+    if (typeof accountKey?.toString === "function" && text === accountKey.toString()) return true;
+    return false;
+  }
+
+  function isKoreSend(op) {
+    const type = op?.type;
+    const send = type === undefined || type === null || type === 0 || type === "0" || type === "SEND";
+    return send && isKoreToken(op?.token);
+  }
+
+  function isPendingPayout(pending) {
+    const intent = readIntent();
+    if (!intent || typeof intent.from !== "string") return false;
+    let owed = 0n;
+    try { owed = BigInt(intent.amount); } catch { return false; }
+    if (owed <= 0n) return false;
+    const ops = pendingOperations(pending);
+    if (ops.length === 0) return false;
+    let dest = null;
+    try { dest = accountFrom(intent.from); } catch { dest = null; }
+    const destText = partyText(dest);
+    let sum = 0n;
+    for (const op of ops) {
+      if (!isKoreSend(op)) return false;
+      const toText = partyText(op?.to);
+      if (!((destText && toText === destText) || toText === intent.from || op?.to === dest)) return false;
+      try {
+        if (op?.amount === undefined || op?.amount === null) return false;
+        sum += BigInt(op.amount);
+      } catch {
+        return false;
+      }
+    }
+    return sum === owed;
+  }
+
+  function pendingHashes(pending) {
+    const hashes = [];
+    for (const block of Array.isArray(pending?.blocks) ? pending.blocks : []) {
+      const hash = block?.hash ?? block?.blocksHash;
+      if (typeof hash === "string" && hash) hashes.push(hash);
+    }
+    if (hashes.length === 0 && typeof pending?.hash === "string" && pending.hash) hashes.push(pending.hash);
+    if (hashes.length === 0) hashes.push(`pending:${String(pending?.date ?? "none")}`);
+    return hashes;
+  }
+
+  function noteLeftPick(pending) {
+    for (const hash of pendingHashes(pending)) {
+      if (leftPickNoted.has(hash)) continue;
+      leftPickNoted.add(hash);
+      console.log("Picks off. Leaving the pending pick block to expire.");
+    }
+  }
+
+  function payoutVoteCap() {
+    rollPayoutFeeDay();
+    const room = payoutFeeBudget() - state.payoutFeeSpent;
+    const cappedRoom = room > 0n ? room : 0n;
+    const cap = payoutFeeCap();
+    return cappedRoom < cap ? cappedRoom : cap;
+  }
+
   async function finishSignedBlock() {
     const pending = await client.pendingBlock();
     if (!pending) return false;
-    console.log("Finishing the block already signed.");
     const when = blockTime(pending);
     if (Number.isFinite(when) && now() - when > 6 * 60 * 1000) {
+      console.log("Finishing the block already signed.");
       console.log("Leaving the expired block. It cannot gather enough votes.");
       return "expired";
     }
+    const payout = isPendingPayout(pending);
+    if (picksOff() && !payout) {
+      noteLeftPick(pending);
+      return "wait";
+    }
+    console.log("Finishing the block already signed.");
     try {
       const blocks = Array.isArray(pending.blocks) ? pending.blocks : [];
       await pauseForRate();
       let quotes;
       if (blocks.length > 0 && typeof client.getQuotes === "function") quotes = await client.getQuotes(blocks);
       const quoted = quotesFee(quotes);
-      const cap = bundleCap();
+      const cap = payout ? payoutVoteCap() : bundleCap();
+      if (payout) {
+        rollPayoutFeeDay();
+        if (state.payoutFeeSpent + quoted.amount > payoutFeeBudget()) {
+          const line = `ALERT Payout fee budget for today is used up (${kta(state.payoutFeeSpent)} of ${kta(payoutFeeBudget())} KTA). Payouts wait until the next UTC day.`;
+          if (line !== payoutBlockNoted) {
+            payoutBlockNoted = line;
+            console.error(line);
+          }
+          await sleep(30000);
+          return "queued";
+        }
+      }
       if (quotes != null && quoted.foreign) {
         noteRefusedFees(quotes);
         throw nonKtaError(quoted.shown, cap);
@@ -524,10 +638,18 @@ export async function runShaft({
         noteRefusedFees(quotes);
         throw new FeeOverCap(quoted.amount, cap);
       }
-      const { generateFeeBlock, taken } = cappedFeeBlock();
+      const { generateFeeBlock, taken } = cappedFeeBlock(cap);
       const recovered = await client.recover(true, { generateFeeBlock, quotes });
       clearEpisode();
+      let charged = 0n;
+      if (payout) {
+        charged = taken.used && taken.fee > 0n ? taken.fee : quoted.amount;
+        rollPayoutFeeDay();
+        state.payoutFeeSpent += charged;
+        payoutBlockNoted = "";
+      }
       notePublish();
+      if (payout) console.log(`Payout fee ${kta(charged)} KTA. Today ${kta(state.payoutFeeSpent)} KTA.`);
       const left = await client.balance(base);
       const remaining = state.windowStart + DAY_MS - now();
       const planNow = pace({ balance: left, remainingMs: remaining, reserve: RESERVE, feePerTx: state.feePerTx ?? FEE_PER_TX });
@@ -728,7 +850,7 @@ function settlePayout(koreBal) {
     writeJson(intentPath, intent);
     writeFileSync(floorPath, `${floor.toString()}\n`, { mode: 0o600 });
     try {
-      const published = await publishCapped(builder, quotes, payoutFeeCap());
+      const published = await publishCapped(builder, quotes, payoutVoteCap());
       clearEpisode();
       const charged = published.fee > 0n ? published.fee : fee;
       rollPayoutFeeDay();
@@ -759,7 +881,6 @@ function settlePayout(koreBal) {
   let sendOn = sendArmed();
   let ran = 0;
   let picksOffNotedAt = null;
-  let payoutBlockNoted = "";
   function notePicksOff() {
     const at = now();
     if (picksOffNotedAt !== null && at - picksOffNotedAt < 10 * 60 * 1000) return;
@@ -814,6 +935,7 @@ function settlePayout(koreBal) {
       }
       const gate = await finishSignedBlock();
       if (gate === "expired") await settleExpiredIntent();
+      if (gate === "queued") continue;
       if (gate === true || gate === "wait") {
         if (gate === true) await pauseForRate();
         if (gate === "wait") await sleep(10000);
@@ -877,6 +999,7 @@ function settlePayout(koreBal) {
 
       const again = await finishSignedBlock();
       if (again === "expired") await settleExpiredIntent();
+      if (again === "queued") continue;
       if (again === true || again === "wait") {
         if (again === true) await pauseForRate();
         if (again === "wait") await sleep(10000);
