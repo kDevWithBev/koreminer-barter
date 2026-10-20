@@ -18,16 +18,6 @@ const sink =
 const defaultDir = "/opt/koreminer";
 const publicLookup = "/var/www/koreminer/lookup.json";
 
-function feeSum(quote) {
-  if (!quote?.fee) return 0n;
-  const fees = Array.isArray(quote.fee) ? quote.fee : [quote.fee];
-  return fees.reduce((sum, fee) => sum + BigInt(fee.amount), 0n);
-}
-
-function quotesFee(quotes) {
-  return (quotes ?? []).map(feeSum).filter((item) => item > 0n).reduce((sum, item) => sum + item, 0n);
-}
-
 function isOverCap(err) {
   return err instanceof FeeOverCap || err?.name === "FeeOverCap";
 }
@@ -127,6 +117,56 @@ export async function runShaft({
     return false;
   }
 
+  function readFeeAmount(item) {
+    if (item == null || item.amount === undefined || item.amount === null || item.amount === "") return null;
+    try {
+      return BigInt(item.amount);
+    } catch {
+      return null;
+    }
+  }
+
+  function selectFee(feeOrList) {
+    if (feeOrList === undefined || feeOrList === null) return { kind: "none", amount: 0n };
+    const fees = Array.isArray(feeOrList) ? feeOrList : [feeOrList];
+    if (fees.length === 0) return { kind: "none", amount: 0n };
+    for (const item of fees) {
+      if (readFeeAmount(item) === 0n) return { kind: "free", amount: 0n };
+    }
+    for (const item of fees) {
+      const amount = readFeeAmount(item);
+      if (amount === null) continue;
+      const token = item?.token;
+      if (token === undefined || token === null) return { kind: "kta", amount };
+      if (typeof token?.comparePublicKey === "function") {
+        if (token.comparePublicKey(base) === true) return { kind: "kta", amount };
+        continue;
+      }
+      if (isKtaFee(token)) return { kind: "kta", amount };
+    }
+    return { kind: "foreign", amount: readFeeAmount(fees[0]) ?? 0n };
+  }
+
+  function feeSum(quote) {
+    const picked = selectFee(quote?.fee);
+    if (picked.kind === "foreign") return { kta: 0n, foreign: picked.amount, refused: true };
+    if (picked.kind === "kta") return { kta: picked.amount, foreign: 0n, refused: false };
+    return { kta: 0n, foreign: 0n, refused: false };
+  }
+
+  function quotesFee(quotes) {
+    let ktaFee = 0n;
+    let foreign = 0n;
+    let refused = false;
+    for (const quote of quotes ?? []) {
+      const part = feeSum(quote);
+      ktaFee += part.kta;
+      foreign += part.foreign;
+      if (part.refused) refused = true;
+    }
+    return { amount: ktaFee, foreign: refused, shown: refused ? ktaFee + foreign : ktaFee };
+  }
+
   function feeTokenText(token) {
     if (typeof token === "string") return token;
     if (typeof token?.id === "string") return token.id;
@@ -142,28 +182,23 @@ export async function runShaft({
     return "";
   }
 
-  function ktaAndForeign(staple) {
-    let ktaFee = 0n;
-    let foreign = 0n;
-    for (const vote of staple?.votes ?? []) {
-      const fee = vote?.fee;
-      if (fee === undefined || fee === null) continue;
-      const fees = Array.isArray(fee) ? fee : [fee];
-      for (const item of fees) {
-        if (item?.amount === undefined || item?.amount === null) continue;
-        const amount = BigInt(item.amount);
-        if (isKtaFee(item.token)) ktaFee += amount;
-        else foreign += amount;
-      }
-    }
-    return { ktaFee, foreign };
-  }
-
   function cappedFeeBlock(cap = bundleCap()) {
     const taken = { fee: 0n, used: false };
     const generateFeeBlock = async (staple) => {
-      const { ktaFee, foreign } = ktaAndForeign(staple);
-      if (foreign > 0n || ktaFee > cap) throw new FeeOverCap(foreign > 0n ? ktaFee + foreign : ktaFee, cap);
+      let ktaFee = 0n;
+      let foreignFee = 0n;
+      let foreign = false;
+      for (const vote of staple?.votes ?? []) {
+        const picked = selectFee(vote?.fee);
+        if (picked.kind === "none" || picked.kind === "free") continue;
+        if (picked.kind === "foreign") {
+          foreign = true;
+          foreignFee += picked.amount;
+          continue;
+        }
+        ktaFee += picked.amount;
+      }
+      if (foreign || ktaFee > cap) throw new FeeOverCap(foreign ? ktaFee + foreignFee : ktaFee, cap);
       taken.fee = ktaFee;
       taken.used = true;
       const builder = client.initBuilder();
@@ -174,7 +209,7 @@ export async function runShaft({
 
   async function publishCapped(builder, quotes, cap = bundleCap()) {
     const quoted = quotesFee(quotes);
-    if (quoted > cap) throw new FeeOverCap(quoted, cap);
+    if (quoted.foreign || quoted.amount > cap) throw new FeeOverCap(quoted.shown, cap);
     const { generateFeeBlock, taken } = cappedFeeBlock(cap);
     const result = await client.publishBuilder(builder, { generateFeeBlock, quotes });
     return { result, fee: taken.used ? taken.fee : 0n };
@@ -353,7 +388,7 @@ export async function runShaft({
       if (blocks.length > 0 && typeof client.getQuotes === "function") quotes = await client.getQuotes(blocks);
       const quoted = quotesFee(quotes);
       const cap = bundleCap();
-      if (quoted > cap) throw new FeeOverCap(quoted, cap);
+      if (quoted.foreign || quoted.amount > cap) throw new FeeOverCap(quoted.shown, cap);
       const { generateFeeBlock, taken } = cappedFeeBlock();
       const recovered = await client.recover(true, { generateFeeBlock, quotes });
       clearEpisode();
@@ -499,7 +534,9 @@ function settlePayout(koreBal) {
     const built = await builder.computeBlocks();
     await pauseForRate();
     const quotes = await client.getQuotes(built.blocks);
-    const fee = quotesFee(quotes);
+    const quoted = quotesFee(quotes);
+    if (quoted.foreign) throw new FeeOverCap(quoted.shown, payoutFeeCap());
+    const fee = quoted.amount;
     const spendable = wallet > RESERVE ? wallet - RESERVE : 0n;
     const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX, cap: payoutFeeCap() });
     if (!judged.ok) {
@@ -583,6 +620,7 @@ function settlePayout(koreBal) {
     if (ran >= steps) break;
     ran += 1;
     try {
+      if (picksOff()) notePicksOff();
       if (now() - state.windowStart >= DAY_MS) {
         state = {
           windowStart: now(),
@@ -662,7 +700,6 @@ function settlePayout(koreBal) {
       }
 
       if (picksOff()) {
-        notePicksOff();
         const koreNow = await client.balance(kore);
         if (koreNow > koreStart) {
           console.log("Extra KORE ignored.", koreNow.toString());
@@ -718,7 +755,9 @@ function settlePayout(koreBal) {
       }
       await pauseForRate();
       const quotes = await client.getQuotes(built.blocks);
-      const total = quotesFee(quotes);
+      const quoted = quotesFee(quotes);
+      if (quoted.foreign) throw new FeeOverCap(quoted.shown, bundleCap());
+      const total = quoted.amount;
       const judged = judgeQuote({
         quote: total,
         ops: BigInt(ops),

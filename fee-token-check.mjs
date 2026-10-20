@@ -40,8 +40,8 @@ const mixed = await runCase({
   }),
   steps: 1,
 });
-check("a mixed fee token publishes nothing", mixed.client.publishes.length === 0 && mixed.client.feeBlockBuilds === 0);
-check("a mixed fee token alerts", alerts(mixed.errors).length === 1);
+check("a mixed fee token publishes the KTA option", mixed.client.publishes.length === 1 && mixed.client.feeBlockBuilds === 1, String(mixed.client.feeBlockBuilds));
+check("a mixed fee token does not alert", alerts(mixed.errors).length === 0, alerts(mixed.errors).join("\n"));
 
 const namedBooks = makeBooks(false);
 const named = await runCase({
