@@ -86,6 +86,7 @@ async function show(heading, dir, client, argv) {
     processes: () => [],
     loadWallet: () => ({ publicKeyString: INTAKE }),
     accountFrom: (id) => ({ publicKeyString: id }),
+    uid: 0,
   });
   console.log(heading);
   console.log(lines.join("\n"));
@@ -152,6 +153,7 @@ const missed = await main({
   processes: () => [],
   loadWallet: () => ({ publicKeyString: INTAKE }),
   accountFrom: (id) => ({ publicKeyString: id }),
+  uid: 0,
 });
 if (missed !== 3) throw new Error("e send");
 const notLanded = await show("(e) --verify NOT_LANDED", e.dir, e.client, ["--verify"]);
@@ -184,6 +186,7 @@ const finished = await main({
   processes: () => [],
   loadWallet: () => ({ publicKeyString: INTAKE }),
   accountFrom: (id) => ({ publicKeyString: id }),
+  uid: 0,
 });
 if (finished !== 0) throw new Error("f send");
 const backup = readdirSync(f.dir).find((name) => name.startsWith("books.json.pre-refund-"));

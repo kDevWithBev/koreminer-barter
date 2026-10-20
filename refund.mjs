@@ -1,6 +1,6 @@
 // Refund one batch of Koreminer KTA from the shaft.
 // Dry run is the default. This file never calls client.send or client.recover.
-// Test hooks (drainSha, plannerFault, drainPath, procRoot) are read only from
+// Test hooks (drainSha, plannerFault, drainPath, procRoot, uid) are read only from
 // the deps object passed to main(). No environment variable and no command-line
 // flag can set them. A custom drainPath is still checked against DRAIN_SHA256
 // unless drainSha is also passed on that same deps object.
@@ -503,11 +503,29 @@ function readDrain(io, deps) {
 function processIsRunner(proc) {
   const argv = Array.isArray(proc?.argv) ? proc.argv.map(String) : [];
   const cwd = typeof proc?.cwd === "string" ? proc.cwd : "";
+  const runners = [];
   for (const arg of argv) {
     if (arg.split("/").pop() !== "run.mjs") continue;
-    if (cwd === ROOT) return true;
+    runners.push(arg);
+  }
+  if (runners.length === 0) return false;
+  let rootReal;
+  try { rootReal = realpathSync(ROOT); }
+  catch {
+    const err = new Error("process list unreadable");
+    err.name = "ProcessListUnreadable";
+    throw err;
+  }
+  for (const arg of runners) {
     const abs = arg.startsWith("/") ? arg : resolve(cwd || "/", arg);
-    if (abs === ROOT || abs.startsWith(`${ROOT}/`)) return true;
+    let real;
+    try { real = realpathSync(abs); }
+    catch {
+      const err = new Error("process list unreadable");
+      err.name = "ProcessListUnreadable";
+      throw err; // GUARD:H3-argv-realpath
+    }
+    if (real === rootReal || real.startsWith(`${rootReal}/`)) return true; // GUARD:H3-realpath
   }
   return false;
 }
@@ -597,7 +615,7 @@ function applyBooks(books, recipients, addbacks, fee) {
   return excludedStake;
 }
 
-function booksAssertions(books, chainBalanceNow, recipients) {
+function booksAssertions(books, chainBalanceNow, recipients, reserveBefore) {
   if (accounted(books) !== chainBalanceNow) return "accounted";
   const lots = new Map();
   for (const lot of books.share.lots) lots.set(lot.from, (lots.get(lot.from) ?? 0n) + BigInt(lot.remaining));
@@ -611,12 +629,19 @@ function booksAssertions(books, chainBalanceNow, recipients) {
     if ((books.share.stake.get(key) ?? 0n) !== 0n) return "stake";
     if (books.share.lots.some((lot) => lot.from === key)) return "lots";
   }
+  if (books.operator < 0n) return "operator"; // GUARD:H4-operator
+  if (books.share.reserve !== reserveBefore) return "reserve"; // GUARD:H4-reserve
   return "";
 }
 
 function finishBooks(ctx, verdict) {
+  ctx.say(`REFUND_LANDED ${ctx.intent.block}`); // GUARD:H2-landed
   const when = stamp(ctx.now());
   const refundDir = ensureRefundDir(ctx.io, ctx.dir);
+  const books = loadBooks(ctx.io, ctx.dir);
+  const reserveBefore = Object.prototype.hasOwnProperty.call(ctx, "reserveBefore") ? ctx.reserveBefore : books.share.reserve;
+  applyBooks(books, ctx.intent.recipients, BigInt(ctx.intent.addbacks), verdict.fee); // GUARD:books-adjust
+  const problem = booksAssertions(books, verdict.balance, ctx.intent.recipients, reserveBefore); // GUARD:R5
   const receipt = {
     block: ctx.intent.block,
     staple: verdict.stapleHash ?? "",
@@ -630,12 +655,14 @@ function finishBooks(ctx, verdict) {
     balanceAfter: verdict.balance.toString(),
     plan: ctx.intent.plan,
   };
-  const done = { block: ctx.intent.block, total: ctx.intent.total, plan: ctx.intent.plan };
+  const done = {
+    block: ctx.intent.block,
+    total: ctx.intent.total,
+    plan: ctx.intent.plan,
+    books: problem ? "mismatch" : "adjusted", // GUARD:H2-books
+  };
   atomicWrite(ctx.io, `${refundDir}/receipt-${when}.json`, `${JSON.stringify(receipt, null, 2)}\n`);
   atomicWrite(ctx.io, `${refundDir}/done.json`, `${JSON.stringify(done, null, 2)}\n`);
-  const books = loadBooks(ctx.io, ctx.dir);
-  applyBooks(books, ctx.intent.recipients, BigInt(ctx.intent.addbacks), verdict.fee); // GUARD:books-adjust
-  const problem = booksAssertions(books, verdict.balance, ctx.intent.recipients); // GUARD:R5
   if (problem) {
     ctx.say("BOOKS_MISMATCH");
     return 3;
@@ -710,6 +737,8 @@ async function main(deps = {}) {
   const owned = [];
   let stopOpen = false;
   try {
+  const uid = deps.uid !== undefined ? deps.uid : process.getuid();
+  if (uid !== 0) return refuse("must run as root"); // GUARD:H3-root
   if (mode !== "verify") {
     const refundDir = ensureRefundDir(io, dir);
     logPath = `${refundDir}/refund-${when}.log`;
@@ -739,7 +768,7 @@ async function main(deps = {}) {
     const minutes = Math.max(0, Math.floor((now() - Date.parse(intent.published || 0)) / 60000));
     if (hist.error || hist.capped) {
       const why = hist.capped ? "history page cap" : "history read failed";
-      say(`REFUND_VERIFY: UNKNOWN ${why} hash found no pending unknown balance ${intent.balanceBefore} now unknown minutes ${minutes}`);
+      say(`REFUND_VERIFY: UNKNOWN ${why} hash found unknown pending unknown balance ${intent.balanceBefore} now unknown minutes ${minutes}`); // GUARD:H1-history
       return 3;
     }
     let pending;
@@ -748,7 +777,7 @@ async function main(deps = {}) {
       pending = await client.pendingBlock();
       balance = await chainBalance(client, base);
     } catch {
-      say(`REFUND_VERIFY: UNKNOWN history read failed hash found no pending unknown balance ${intent.balanceBefore} now unknown minutes ${minutes}`);
+      say(`REFUND_VERIFY: UNKNOWN history read failed hash found unknown pending unknown balance ${intent.balanceBefore} now unknown minutes ${minutes}`); // GUARD:H1-balance
       return 3;
     }
     const hit = findHash(hist, intent.block, base, baseText);
@@ -768,6 +797,13 @@ async function main(deps = {}) {
     });
     if (state === "LANDED") {
       if (io.existsSync(`${dir}/refund/done.json`)) { // GUARD:R3-once
+        let doneBody = {};
+        try { doneBody = JSON.parse(io.readFileSync(`${dir}/refund/done.json`, "utf8")); }
+        catch { doneBody = {}; }
+        if (doneBody.books === "mismatch") { // GUARD:H2-verify-mismatch
+          say("REFUND_VERIFY: LANDED books not adjusted");
+          return 3;
+        }
         say("REFUND_VERIFY: LANDED (already finished)");
         return 0;
       }
@@ -789,7 +825,12 @@ async function main(deps = {}) {
     if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:N3
     throw err;
   }
+  try {
   if ((procs ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:G1-process
+  } catch (err) {
+    if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:H3-resolve
+    throw err;
+  }
   for (const name of ["STOP", "HALT", "PAYHOLD", "FEEHOLD"]) {
     if (io.existsSync(`${dir}/${name}`)) return refuse(`${name} is present`); // GUARD:G2
   }
@@ -822,6 +863,7 @@ async function main(deps = {}) {
   let books;
   try { books = loadBooks(io, dir); }
   catch { return refuse("books are unreadable"); }
+  const reserveAtCheck = books.share.reserve;
   let chain;
   try { chain = await chainBalance(client, base); }
   catch { return refuse("balance read failed"); }
@@ -870,15 +912,10 @@ async function main(deps = {}) {
     return 0;
   }
 
-  const loadWallet = deps.loadWallet ?? ((walletDir) => defaultLoadWallet(walletDir, io));
-  let wallet;
-  try { wallet = await loadWallet(dir); }
-  catch { return refuse("seed is not the intake wallet"); }
-  const walletKey = accountKey(wallet?.publicKeyString) || accountKey(wallet);
-  if (walletKey !== INTAKE) return refuse("seed is not the intake wallet"); // GUARD:G5
   const confirmTotal = flag(argv, "--confirm-total");
   const confirmCount = flag(argv, "--confirm-count");
   const confirmPlan = flag(argv, "--confirm-plan");
+  // GUARD:H5
   if (mode === "send") {
     if (confirmTotal === undefined || confirmCount === undefined || confirmTotal !== show18(planned.total) || confirmCount !== String(planned.rows.length)) { // GUARD:G12-total
       if (confirmTotal === undefined || confirmCount === undefined) return refuse("confirm flags are missing");
@@ -890,6 +927,13 @@ async function main(deps = {}) {
       return refuse("confirm plan does not match");
     }
   }
+
+  const loadWallet = deps.loadWallet ?? ((walletDir) => defaultLoadWallet(walletDir, io));
+  let wallet;
+  try { wallet = await loadWallet(dir); }
+  catch { return refuse("seed is not the intake wallet"); }
+  const walletKey = accountKey(wallet?.publicKeyString) || accountKey(wallet);
+  if (walletKey !== INTAKE) return refuse("seed is not the intake wallet"); // GUARD:G5
   if (!deps.client) client = await openSigning(deps, owned, wallet); // GUARD:B1-signing
 
   const builder = client.initBuilder();
@@ -911,7 +955,7 @@ async function main(deps = {}) {
   if (quoted.foreign) return refuse("quote is non-KTA");
   if (quoted.kta > REFUND_FEE_CAP) return refuse("quote is over the refund fee cap"); // GUARD:G10-quote
   const { generateFeeBlock, taken } = makeFee(client, base, baseText);
-  if (chain < planned.total + quoted.kta + RESERVE) return refuse("balance is short of the refund"); // GUARD:G11
+  if (chain < planned.total + REFUND_FEE_CAP + RESERVE) return refuse("balance is short of the refund"); // GUARD:G11-quoted
 
   const feeText = show18(quoted.kta);
   for (const line of summaryLines(planned, books, feeText, chain, chain - planned.total - quoted.kta)) say(line);
@@ -956,7 +1000,12 @@ async function main(deps = {}) {
     if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:F2
     throw err;
   }
+  try {
   if ((procsAgain ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:R4-recheck
+  } catch (err) {
+    if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:H3-resolve-recheck
+    throw err;
+  }
   let pendingAgain;
   try { pendingAgain = await client.pendingBlock(); }
   catch { return refuse("a block is already pending"); }
@@ -969,7 +1018,7 @@ async function main(deps = {}) {
   if (againTotal !== chainAgain || (booksAgain.pendingDrops ?? []).length > 0) {
     return refuse(booksReason(againTotal, chainAgain)); // GUARD:R4-recheck
   }
-  if (chainAgain < planned.total + quoted.kta + RESERVE) return refuse("balance is short of the refund"); // GUARD:R4-recheck
+  if (chainAgain < planned.total + REFUND_FEE_CAP + RESERVE) return refuse("balance is short of the refund"); // GUARD:R4-recheck
 
   const intent = {
     block: hashText(block.hash),
@@ -1025,7 +1074,7 @@ async function main(deps = {}) {
   const expected = chainAgain - planned.total - fee;
   const landed = hit.found && feeOk && !pendingLand && balanceLand === expected; // GUARD:R1-landed
   if (landed) {
-    const code = finishBooks({ dir, now, say, intent, io }, { fee, balance: balanceLand, stapleHash: hit.stapleHash });
+    const code = finishBooks({ dir, now, say, intent, io, reserveBefore: reserveAtCheck }, { fee, balance: balanceLand, stapleHash: hit.stapleHash });
     if (code !== 0) return code;
     say("REFUND_SENT_OK");
     return 0;

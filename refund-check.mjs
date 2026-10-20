@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accounted, booksFromJson } from "./books.mjs";
+import { RESERVE } from "./share.mjs";
 import { main, DRAIN_SHA256, MEMO, INTAKE, REFUND_FEE_CAP } from "./refund.mjs";
 
 const RAW = 10n ** 18n;
@@ -236,6 +237,7 @@ async function run(opts = {}) {
   }
   if (opts.drainSha !== undefined) baseDeps.drainSha = opts.drainSha;
   if (opts.plannerFault) baseDeps.plannerFault = opts.plannerFault;
+  if (opts.uid !== undefined) baseDeps.uid = opts.uid;
   async function go(argv, extra = {}) {
     const lines = [];
     const code = await main({
@@ -417,7 +419,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   const wrongCount = await run({ argv: sendArgv(info, { n: "13" }) });
   const wrongPlan = await run({ argv: sendArgv(info, { plan: `${info.plan.slice(0, -1)}0` }) });
   for (const [name, result] of [["total flag", missingTotal], ["count flag", missingCount], ["plan flag", missingPlan], ["total", wrongTotal], ["count", wrongCount], ["plan", wrongPlan]]) {
-    check(`T10 ${name} is refused`, result.code === 2 && result.counts.publish === 0 && result.counts.quotes === 0 && result.counts.builds === 0 && result.counts.init === 0 && has(result.lines, "REFUND_REFUSED:"));
+    check(`T10 ${name} is refused`, result.code === 2 && result.counts.publish === 0 && result.counts.quotes === 0 && result.counts.builds === 0 && result.counts.init === 0 && result.counts.seed === 0 && has(result.lines, "REFUND_REFUSED:"));
   }
 }
 
@@ -785,6 +787,21 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   check("T18 verify of pending writes nothing", verifyStill.code === 3 && has(verifyStill.lines, "REFUND_VERIFY: PENDING") && snapshot(still.dir) === beforeStill);
 }
 
+const hadKoreminerRoot = existsSync("/opt/koreminer");
+const hadHomeRunner = existsSync("/home/x");
+if (!existsSync("/opt/koreminer/run.mjs")) {
+  mkdirSync("/opt/koreminer", { recursive: true });
+  writeFileSync("/opt/koreminer/run.mjs", "// koreminer runner fixture\n");
+}
+if (!existsSync("/home/x/run.mjs")) {
+  mkdirSync("/home/x", { recursive: true });
+  writeFileSync("/home/x/run.mjs", "// outside the koreminer root\n");
+}
+process.on("exit", () => {
+  if (!hadKoreminerRoot) rmSync("/opt/koreminer", { recursive: true, force: true });
+  if (!hadHomeRunner) rmSync("/home/x", { recursive: true, force: true });
+});
+
 {
   const info = await plan();
   const stopped = await run({
@@ -1137,6 +1154,148 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   const text = accounted(booksFromJson(JSON.parse(readFileSync(FIXTURE, "utf8")))).toString();
   const stringBalance = await run({ argv: ["--no-quote"], onBalance: () => text });
   check("N5 a base-10 integer string is accepted", stringBalance.code === 0 && has(stringBalance.lines, "REFUND_DRY_RUN_OK (no quote)"));
+}
+
+{
+  const info = await plan();
+  const missed = await run({
+    argv: sendArgv(info),
+    onPublish: () => ({ from: "direct", voteStaple: { blocks: [{ hash: hashOf("OTHER") }] } }),
+  });
+  missed.client.getHistory = async () => { throw new Error("SECRET-HIST"); };
+  const hist = await missed.again(["--verify"]);
+  check("H1 a history failure says hash found unknown", hist.code === 3 && has(hist.lines, "REFUND_VERIFY: UNKNOWN history read failed hash found unknown") && !has(hist.lines, "hash found no") && !has(hist.lines, "SECRET-HIST"));
+  const missedBal = await run({
+    argv: sendArgv(info),
+    onPublish: () => ({ from: "direct", voteStaple: { blocks: [{ hash: hashOf("OTHER") }] } }),
+  });
+  missedBal.client.pendingBlock = async () => { throw new Error("SECRET-BAL"); };
+  const bal = await missedBal.again(["--verify"]);
+  check("H1 a balance failure says hash found unknown", bal.code === 3 && has(bal.lines, "REFUND_VERIFY: UNKNOWN history read failed hash found unknown") && !has(bal.lines, "hash found no") && !has(bal.lines, "SECRET-BAL"));
+  const read = await run({
+    argv: sendArgv(info),
+    onPublish: () => ({ from: "direct", voteStaple: { blocks: [{ hash: hashOf("OTHER") }] } }),
+  });
+  const facts = await read.again(["--verify"]);
+  check("H1 a successful read still says hash found no", facts.code === 3 && has(facts.lines, "hash found no") && !has(facts.lines, "hash found unknown"));
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const land = (ctx) => {
+    ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+    ctx.live.balance -= rawTotal + FEE;
+    return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+  };
+  const landed = await run({ argv: sendArgv(info), onPublish: (_b, _o, ctx) => land(ctx) });
+  const done = JSON.parse(readFileSync(join(landed.dir, "refund", "done.json"), "utf8"));
+  check("H2 a landed send prints REFUND_LANDED and marks the books adjusted", landed.code === 0 && has(landed.lines, "REFUND_LANDED REFUNDHASH") && done.books === "adjusted" && has(landed.lines, "BOOKS_OK") && has(landed.lines, "REFUND_SENT_OK"));
+  done.books = "mismatch";
+  writeFileSync(join(landed.dir, "refund", "done.json"), `${JSON.stringify(done, null, 2)}\n`);
+  const shot = snapshot(landed.dir);
+  const held = await landed.again(["--verify"]);
+  check("H2 verify of a books mismatch makes no writes", held.code === 3 && has(held.lines, "REFUND_VERIFY: LANDED books not adjusted") && !has(held.lines, "BOOKS_OK") && !has(held.lines, "REFUND_LANDED") && snapshot(landed.dir) === shot);
+  const resume = await run({ argv: sendArgv(info), onPublish: (_b, _o, ctx) => land(ctx) });
+  const backup = readdirSync(resume.dir).find((name) => name.startsWith("books.json.pre-refund-"));
+  rmSync(join(resume.dir, "refund", "done.json"));
+  copyFileSync(join(resume.dir, backup), resume.booksPath);
+  const finished = await resume.again(["--verify"]);
+  const finishedDone = JSON.parse(readFileSync(join(resume.dir, "refund", "done.json"), "utf8"));
+  check("H2 verify finish prints REFUND_LANDED and marks the books adjusted", finished.code === 0 && has(finished.lines, "REFUND_LANDED REFUNDHASH") && has(finished.lines, "REFUND_VERIFY: LANDED (finished now)") && finishedDone.books === "adjusted");
+  const again = await resume.again(["--verify"]);
+  check("H2 verify of adjusted books is already finished", again.code === 0 && has(again.lines, "REFUND_VERIFY: LANDED (already finished)") && !has(again.lines, "books not adjusted"));
+}
+
+{
+  const outsider = await run({ argv: ["--no-quote"], uid: 1 });
+  check("H3 a non-root run is refused", outsider.code === 2 && has(outsider.lines, "REFUND_REFUSED: must run as root") && !existsSync(join(outsider.dir, "refund")));
+  const verify = await run({ argv: ["--verify"], uid: 1 });
+  check("H3 verify as non-root is refused", verify.code === 2 && has(verify.lines, "REFUND_REFUSED: must run as root") && !existsSync(join(verify.dir, "refund")) && verify.counts.seed === 0);
+  const info = await plan();
+  const send = await run({ argv: sendArgv(info), uid: 4 });
+  check("H3 send as non-root is refused before any write", send.code === 2 && has(send.lines, "REFUND_REFUSED: must run as root") && !existsSync(join(send.dir, "refund")) && send.counts.publish === 0 && send.counts.seed === 0);
+  const linkDir = mkdtempSync(join(tmpdir(), "kore-runner-link-"));
+  symlinkSync("/opt/koreminer/run.mjs", join(linkDir, "run.mjs"));
+  const linked = await run({ argv: ["--no-quote"], processes: () => [{ argv: ["node", join(linkDir, "run.mjs")], cwd: "/" }] });
+  check("H3 a symlink whose realpath is the runner is refused", linked.code === 2 && has(linked.lines, "run.mjs is running"));
+  const missing = await run({
+    argv: ["--no-quote"],
+    processes: () => [{ argv: ["node", "/no/such/run.mjs"], cwd: "/" }],
+  });
+  check("H3 an unresolvable run.mjs path is unreadable", missing.code === 2 && has(missing.lines, "REFUND_REFUSED: process list unreadable") && !has(missing.lines, "/no/such") && !has(missing.lines, "ENOENT") && !has(missing.lines, "unexpected"));
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  const shift = BigInt(raw.operator) + RAW;
+  raw.operator = (-RAW).toString();
+  raw.parked = (BigInt(raw.parked ?? "0") + shift).toString();
+  const text = JSON.stringify(raw);
+  const operator = await run({
+    argv: sendArgv(info),
+    booksText: text,
+    onPublish: (_b, _o, ctx) => {
+      ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+      ctx.live.balance -= rawTotal + FEE;
+      return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+    },
+  });
+  const operatorDone = JSON.parse(readFileSync(join(operator.dir, "refund", "done.json"), "utf8"));
+  const operatorReceipt = readdirSync(join(operator.dir, "refund")).some((name) => name.startsWith("receipt-"));
+  check("H4 a negative operator is a books mismatch", operator.code === 3 && has(operator.lines, "BOOKS_MISMATCH") && has(operator.lines, "REFUND_LANDED REFUNDHASH") && !has(operator.lines, "BOOKS_OK") && operatorDone.books === "mismatch" && operatorReceipt && readFileSync(operator.booksPath, "utf8") === text && !readdirSync(operator.dir).some((name) => name.startsWith("books.json.pre-refund-")));
+  let tampered = "";
+  const reserve = await run({
+    argv: sendArgv(info),
+    onPublish: (_b, _o, ctx) => {
+      ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+      ctx.live.balance -= rawTotal + FEE;
+      const body = JSON.parse(readFileSync(join(ctx.dir, "books.json"), "utf8"));
+      body.reserve = (BigInt(body.reserve) + 1n).toString();
+      body.operator = (BigInt(body.operator) - 1n).toString();
+      tampered = JSON.stringify(body);
+      writeFileSync(join(ctx.dir, "books.json"), tampered);
+      return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+    },
+  });
+  const reserveDone = JSON.parse(readFileSync(join(reserve.dir, "refund", "done.json"), "utf8"));
+  const reserveReceipt = readdirSync(join(reserve.dir, "refund")).some((name) => name.startsWith("receipt-"));
+  check("H4 a changed reserve is a books mismatch", reserve.code === 3 && has(reserve.lines, "BOOKS_MISMATCH") && !has(reserve.lines, "BOOKS_OK") && reserveDone.books === "mismatch" && reserveReceipt && readFileSync(reserve.booksPath, "utf8") === tampered && !readdirSync(reserve.dir).some((name) => name.startsWith("books.json.pre-refund-")));
+}
+
+{
+  const info = await plan();
+  const wrong = await run({
+    argv: sendArgv(info, { plan: "0".repeat(64) }),
+    trackReads: true,
+    loadWallet: (walletDir) => {
+      readFileSync(join(walletDir, "seed.txt"), "utf8");
+      return { publicKeyString: INTAKE };
+    },
+  });
+  check("H5 a wrong confirm never opens the seed", wrong.code === 2 && wrong.counts.seed === 0 && wrong.counts.init === 0 && wrong.counts.quotes === 0 && wrong.counts.publish === 0 && !wrong.opened.some((path) => path.endsWith("seed.txt")) && has(wrong.lines, "confirm plan does not match"));
+}
+
+{
+  const info = await plan();
+  const total = BigInt(info.total.replace(".", ""));
+  const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  const have = accounted(booksFromJson(JSON.parse(readFileSync(FIXTURE, "utf8"))));
+  const target = total + FEE + RESERVE;
+  const capLine = total + REFUND_FEE_CAP + RESERVE;
+  const drop = have - target;
+  const op = BigInt(raw.operator);
+  const park = BigInt(raw.parked ?? "0");
+  const fromOp = op > drop ? drop : op;
+  raw.operator = (op - fromOp).toString();
+  raw.parked = (park - (drop - fromOp)).toString();
+  const text = JSON.stringify(raw);
+  const next = accounted(booksFromJson(JSON.parse(text)));
+  const short = await run({ argv: [], booksText: text });
+  check("H6 setup covers the quote but not the fee cap", next === target && next < capLine && short.live.balance === next);
+  check("H6 the worst-case fee is refused", short.code === 2 && short.counts.publish === 0 && has(short.lines, "balance is short of the refund"));
 }
 
 {
