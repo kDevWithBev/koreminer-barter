@@ -1,7 +1,9 @@
 // Refund one batch of Koreminer KTA from the shaft.
 // Dry run is the default. This file never calls client.send or client.recover.
-// Test hooks (drainSha, plannerFault) are read only from the deps object passed
-// to main(). No environment variable and no command-line flag can set them.
+// Test hooks (drainSha, plannerFault, drainPath, procRoot) are read only from
+// the deps object passed to main(). No environment variable and no command-line
+// flag can set them. A custom drainPath is still checked against DRAIN_SHA256
+// unless drainSha is also passed on that same deps object.
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -287,8 +289,8 @@ function makeFee(client, base, baseText) {
 function feeReason(err) {
   if (err?.name === "FeeBuilt") return "built fee block does not match";
   if (err?.name === "FeeForeign") return "vote fee is non-KTA";
-  if (err?.name === "FeeUnusable") return "quote is unusable";
-  return "vote fee is over the refund fee cap";
+  if (err?.name === "FeeOverCap") return "vote fee is over the refund fee cap";
+  return "quote is unusable";
 }
 
 function stapleTime(staple) {
@@ -335,7 +337,7 @@ async function readHistory(client) {
         const hash = hashText(block?.hash);
         for (const op of block?.operations ?? []) {
           if (op?.type !== 0 && op?.type !== "SEND") continue;
-          if (externalText(op?.external) === MEMO && hash) memos.push({ hash });
+          if (externalText(op?.external) === MEMO) memos.push({ hash: hash || "unknown" }); // GUARD:S2
         }
       }
     }
@@ -520,18 +522,32 @@ function defaultSystemctl() {
   }
 }
 
-function defaultProcesses() {
+function defaultProcesses(root = "/proc") {
+  let names;
+  try { names = readdirSync(root); }
+  catch {
+    const err = new Error("process list unreadable");
+    err.name = "ProcessListUnreadable";
+    throw err;
+  }
   const found = [];
-  let names = [];
-  try { names = readdirSync("/proc"); } catch { return found; }
   for (const pid of names) {
     if (!/^\d+$/.test(pid)) continue;
-    let argv = [];
-    try {
-      argv = readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
-    } catch { continue; }
-    let cwd = "";
-    try { cwd = readlinkSync(`/proc/${pid}/cwd`); } catch { cwd = ""; }
+    let argvText;
+    try { argvText = readFileSync(`${root}/${pid}/cmdline`); }
+    catch {
+      const err = new Error("process list unreadable");
+      err.name = "ProcessListUnreadable";
+      throw err;
+    }
+    const argv = Buffer.from(argvText).toString("utf8").split("\0").filter(Boolean);
+    let cwd;
+    try { cwd = readlinkSync(`${root}/${pid}/cwd`); }
+    catch {
+      const err = new Error("process list unreadable");
+      err.name = "ProcessListUnreadable";
+      throw err;
+    }
     found.push({ pid, argv, cwd });
   }
   return found;
@@ -542,10 +558,11 @@ async function valueOf(fn) {
 }
 
 async function chainBalance(client, base) {
-  const value = await client.balance(base);
+  let value;
+  try { value = await client.balance(base); }
+  catch { throw new Error("balance"); }
   if (typeof value === "bigint") return value;
-  if (typeof value === "string" || typeof value === "number") return BigInt(value);
-  if (value && typeof value === "object" && value.amount !== undefined) return BigInt(value.amount);
+  if (typeof value === "string" && /^(?:0|[1-9]\d*)$/.test(value)) return BigInt(value);
   throw new Error("balance");
 }
 
@@ -618,6 +635,7 @@ function finishBooks(ctx, verdict) {
   }
   const backup = `${ctx.dir}/books.json.pre-refund-${when}`;
   ctx.io.copyFileSync(`${ctx.dir}/books.json`, backup);
+  ctx.io.chmodSync(backup, 0o600);
   const fd = ctx.io.openSync(backup, "r+");
   try { ctx.io.fsyncSync(fd); } finally { ctx.io.closeSync(fd); }
   atomicWrite(ctx.io, `${ctx.dir}/books.json`, `${JSON.stringify(booksToJson(books), null, 2)}\n`);
@@ -682,6 +700,9 @@ async function main(deps = {}) {
     say(`REFUND_REFUSED: ${reason}`);
     return 2;
   }
+  const owned = [];
+  let stopOpen = false;
+  try {
   if (mode !== "verify") {
     const refundDir = ensureRefundDir(io, dir);
     logPath = `${refundDir}/refund-${when}.log`;
@@ -702,10 +723,9 @@ async function main(deps = {}) {
       say("REFUND_VERIFY: UNKNOWN intent unreadable");
       return 3;
     }
-    const client = deps.client ?? await (deps.clientFactory ?? defaultClientFactory)({ readOnly: true });
-    if (false) await client.getQuotes([]); // GUARD:R3-no-build
-    const base = deps.base;
-    const baseText = deps.baseText ?? accountKey(base);
+    const chain = await resolveChain(deps);
+    const client = deps.client ?? await openReadOnly(deps, owned); // GUARD:R3-no-build
+    const { base, baseText } = chain;
     let hist;
     try { hist = await readHistory(client); }
     catch { hist = { error: true, capped: false, memos: [], staples: [] }; }
@@ -755,7 +775,13 @@ async function main(deps = {}) {
 
   const state = await valueOf(systemctl);
   if (state !== "inactive" && state !== "failed") return refuse("runner is active"); // GUARD:G1-systemctl
-  const procs = await valueOf(processes);
+  let procs;
+  try {
+    procs = deps.processes !== undefined ? await valueOf(processes) : defaultProcesses(deps.procRoot);
+  } catch (err) {
+    if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:N3
+    throw err;
+  }
   if ((procs ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:G1-process
   for (const name of ["STOP", "HALT", "PAYHOLD", "FEEHOLD"]) {
     if (io.existsSync(`${dir}/${name}`)) return refuse(`${name} is present`); // GUARD:G2
@@ -774,9 +800,9 @@ async function main(deps = {}) {
     return refuse(`prior refund ${kind} ${note}. Use --verify.`);
   }
 
-  const client = deps.client ?? await (deps.clientFactory ?? defaultClientFactory)({ readOnly: mode === "no-quote" });
-  const base = deps.base;
-  const baseText = deps.baseText ?? accountKey(base);
+  const chainParts = await resolveChain(deps);
+  let client = deps.client ?? await openReadOnly(deps, owned);
+  const { base, baseText, accountFrom } = chainParts;
   const hist = await readHistory(client);
   if (hist.error) return refuse("history read failed");
   if (hist.capped) return refuse("history page cap hit before cutoff"); // GUARD:G3b-cap
@@ -822,10 +848,9 @@ async function main(deps = {}) {
   }
   if (assertPlan(planned.rows, planned.total)) return refuse("plan assertion failed"); // GUARD:R7
   planned.digest = digestOf(planned.rows.filter((row) => row.amount > 0n));
-  const accountFrom = deps.accountFrom ?? ((id) => ({ publicKeyString: id }));
   for (const row of planned.rows) {
     if (!(row.amount > 0n)) continue;
-    try { accountFrom(row.key); }
+    try { accountFrom(row.key); } // GUARD:B1-decode
     catch { return refuse("address does not decode"); }
   }
   if (planned.rows.length === 0 || planned.rows.length > 50) return refuse("batch shape is wrong");
@@ -844,33 +869,6 @@ async function main(deps = {}) {
   catch { return refuse("seed is not the intake wallet"); }
   const walletKey = accountKey(wallet?.publicKeyString) || accountKey(wallet);
   if (walletKey !== INTAKE) return refuse("seed is not the intake wallet"); // GUARD:G5
-
-  const builder = client.initBuilder();
-  for (const row of planned.rows) builder.send(accountFrom(row.key), row.amount, base, MEMO);
-  let computed;
-  try { computed = await builder.computeBlocks(); }
-  catch { return refuse("batch shape is wrong"); }
-  const block = computed?.blocks?.[0];
-  if (!computed?.blocks || computed.blocks.length !== 1 || batchProblem(block, planned.rows, planned.total, base, baseText)) {
-    return refuse("batch shape is wrong"); // GUARD:G9
-  }
-
-  let quotes;
-  try { quotes = await client.getQuotes(computed.blocks); }
-  catch { return refuse("quote is unusable"); }
-  const quoted = judgeVotes(quotes, base, baseText);
-  if (!quoted.usable) return refuse("quote is unusable");
-  if (quoted.foreign) return refuse("quote is non-KTA");
-  if (quoted.kta > REFUND_FEE_CAP) return refuse("quote is over the refund fee cap"); // GUARD:G10-quote
-  const { generateFeeBlock, taken } = makeFee(client, base, baseText);
-  const voteSource = typeof client.feeVotes === "function" ? await client.feeVotes() : quotes;
-  try {
-    await generateFeeBlock({ votes: voteSource });
-  } catch (err) {
-    return refuse(feeReason(err));
-  }
-  if (chain < planned.total + quoted.kta + RESERVE) return refuse("balance is short of the refund"); // GUARD:G11
-
   const confirmTotal = flag(argv, "--confirm-total");
   const confirmCount = flag(argv, "--confirm-count");
   const confirmPlan = flag(argv, "--confirm-plan");
@@ -885,19 +883,44 @@ async function main(deps = {}) {
       return refuse("confirm plan does not match");
     }
   }
+  if (!deps.client) client = await openSigning(deps, owned, wallet); // GUARD:B1-signing
+
+  const builder = client.initBuilder();
+  for (const row of planned.rows) builder.send(accountFrom(row.key), row.amount, base, MEMO);
+  let computed;
+  try { computed = await builder.computeBlocks(); }
+  catch { return refuse("batch shape is wrong"); }
+  const block = computed?.blocks?.[0];
+  if (!computed?.blocks || computed.blocks.length !== 1 || batchProblem(block, planned.rows, planned.total, base, baseText)) {
+    return refuse("batch shape is wrong"); // GUARD:G9
+  }
+  if (!hashText(block.hash)) return refuse("batch shape is wrong"); // GUARD:S6
+
+  let quotes;
+  try { quotes = await client.getQuotes(computed.blocks); }
+  catch { return refuse("quote is unusable"); }
+  const quoted = judgeVotes(quotes, base, baseText);
+  if (!quoted.usable) return refuse("quote is unusable");
+  if (quoted.foreign) return refuse("quote is non-KTA");
+  if (quoted.kta > REFUND_FEE_CAP) return refuse("quote is over the refund fee cap"); // GUARD:G10-quote
+  const { generateFeeBlock, taken } = makeFee(client, base, baseText);
+  if (chain < planned.total + quoted.kta + RESERVE) return refuse("balance is short of the refund"); // GUARD:G11
 
   const feeText = show18(quoted.kta);
   for (const line of summaryLines(planned, books, feeText, chain, chain - planned.total - quoted.kta)) say(line);
   if (mode !== "send") { // GUARD:dry-run-no-publish
-    if (true) { // GUARD:S2
-      let again = null;
-      try { again = await client.pendingBlock(); } catch { again = null; }
-      if (again) {
-        say(`Pending block after quote: ${hashText(again.hash) || "pending"}`);
-        say("REFUND_CHECK: pending block after quote");
-      } else {
-        say("Pending block after quote: none");
-      }
+    let again = null;
+    let pendingUnknown = false;
+    try { again = await client.pendingBlock(); } // GUARD:S2
+    catch { pendingUnknown = true; }
+    if (pendingUnknown) {
+      say("Pending block after quote: unknown");
+      say("REFUND_CHECK: pending block after quote");
+    } else if (again) {
+      say(`Pending block after quote: ${hashText(again.hash) || "pending"}`);
+      say("REFUND_CHECK: pending block after quote");
+    } else {
+      say("Pending block after quote: none");
     }
     say("REFUND_DRY_RUN_OK");
     atomicWrite(io, `${dir}/refund/dryrun-${when}.txt`, `${lines.join("\n")}\n`);
@@ -907,6 +930,7 @@ async function main(deps = {}) {
   let stopFd;
   try {
     stopFd = io.openSync(`${dir}/STOP`, "wx", 0o600); // GUARD:R4-exclusive
+    stopOpen = true;
   } catch {
     return refuse("STOP already exists");
   }
@@ -1011,6 +1035,52 @@ async function main(deps = {}) {
   }
   say(`REFUND_HOLD: ${fact}`); // GUARD:R1-balance-only
   return 3;
+  } catch (err) {
+    const name = err instanceof Error && err.name ? err.name : "Error";
+    if (stopOpen) { // GUARD:S3-after
+      say(`REFUND_HOLD: unexpected ${name}`);
+      return 3;
+    }
+    say(`REFUND_REFUSED: unexpected ${name}`); // GUARD:S3-before
+    return 2;
+  } finally {
+    for (const created of owned) {
+      try { await created.destroy?.(); } catch { /* the one-shot script is leaving */ }
+    }
+  }
+}
+
+function sdkParts(KeetaNet) {
+  const base = KeetaNet.lib.Account.generateBaseAddresses(0x5382n).baseToken;
+  const baseText = base.publicKeyString.toString();
+  const accountFrom = (id) => KeetaNet.lib.Account.fromPublicKeyString(id);
+  return { base, baseText, accountFrom };
+}
+
+async function resolveChain(deps) {
+  let base = deps.base;
+  let baseText = deps.baseText;
+  let accountFrom = deps.accountFrom;
+  if (base === undefined || baseText === undefined || accountFrom === undefined) {
+    const KeetaNet = await import("@keetanetwork/keetanet-client");
+    const parts = sdkParts(KeetaNet);
+    if (base === undefined) base = parts.base;
+    if (baseText === undefined) baseText = parts.baseText;
+    if (accountFrom === undefined) accountFrom = parts.accountFrom;
+  }
+  return { base, baseText, accountFrom };
+}
+
+async function openReadOnly(deps, owned) {
+  const client = await (deps.clientFactory ?? defaultClientFactory)({ readOnly: true });
+  owned.push(client);
+  return client;
+}
+
+async function openSigning(deps, owned, wallet) {
+  const client = await (deps.clientFactory ?? defaultClientFactory)({ readOnly: false, wallet });
+  owned.push(client);
+  return client;
 }
 
 async function defaultLoadWallet(dir, io) {
@@ -1020,10 +1090,15 @@ async function defaultLoadWallet(dir, io) {
   return KeetaNet.lib.Account.fromSeed(String(hex), 0);
 }
 
-async function defaultClientFactory({ readOnly, wallet }) {
+async function defaultClientFactory({ readOnly, wallet } = {}) {
   const KeetaNet = await import("@keetanetwork/keetanet-client");
-  const account = readOnly ? KeetaNet.lib.Account.fromPublicKeyString(INTAKE) : wallet;
-  return KeetaNet.UserClient.fromNetwork("main", account);
+  if (readOnly) {
+    const account = KeetaNet.lib.Account.fromPublicKeyString(INTAKE);
+    // Signer null is the SDK's read-only client. The account option supplies
+    // the intake address for balance, history and pending reads.
+    return KeetaNet.UserClient.fromNetwork("main", null, { account });
+  }
+  return KeetaNet.UserClient.fromNetwork("main", wallet);
 }
 
 function startedDirectly() {

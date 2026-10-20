@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accounted, booksFromJson } from "./books.mjs";
@@ -150,6 +150,15 @@ async function run(opts = {}) {
     },
     async publishBuilder(builder, options) {
       counts.publish += 1;
+      const blocks = client.lastBlock ? [client.lastBlock] : [];
+      const quoteList = options?.quotes ?? live.quotes;
+      const voteSource = opts.voteFees ?? quoteList;
+      const votes = (Array.isArray(voteSource) ? voteSource : []).map((entry) => ({ fee: entry?.fee ?? entry }));
+      const staple = { votes, blocks };
+      client.lastFeeCall = { staple, options, blocksIsArray: Array.isArray(staple.blocks), votesIsArray: Array.isArray(staple.votes) };
+      if (typeof options?.generateFeeBlock === "function") {
+        await options.generateFeeBlock(staple, options);
+      }
       if (opts.onPublish) return opts.onPublish(builder, options, { dir, live, blockHash, counts });
       return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(blockHash) }] } };
     },
@@ -190,7 +199,6 @@ async function run(opts = {}) {
       };
     },
   };
-  if (opts.feeVotes) client.feeVotes = async () => opts.feeVotes;
   if (opts.useHistory) {
     client.history = async () => live.history;
   } else {
@@ -222,6 +230,10 @@ async function run(opts = {}) {
     fs,
     drainPath: opts.drainPath,
   };
+  if (opts.useProc) {
+    delete baseDeps.processes;
+    baseDeps.procRoot = opts.procRoot;
+  }
   if (opts.drainSha !== undefined) baseDeps.drainSha = opts.drainSha;
   if (opts.plannerFault) baseDeps.plannerFault = opts.plannerFault;
   async function go(argv, extra = {}) {
@@ -310,23 +322,23 @@ check("T3 exact fee cap passes", capOk.code === 0 && has(capOk.lines, "REFUND_DR
 const capOver = await run({
   argv: [],
   quotes: [{ fee: { amount: REFUND_FEE_CAP + 1n, token: BASE } }],
-  feeVotes: [{ fee: { amount: 1n, token: BASE } }],
 });
 check("T3 one raw unit over the cap is refused", capOver.code === 2 && capOver.counts.publish === 0 && capOver.counts.feeBuilds === 0 && has(capOver.lines, "quote is over the refund fee cap"));
+const infoT3 = await plan();
 const voteOver = await run({
-  argv: [],
+  argv: sendArgv(infoT3),
   quotes: [{ fee: { amount: 1000n, token: BASE } }],
-  feeVotes: [{ fee: { amount: REFUND_FEE_CAP + 1n, token: BASE } }],
+  voteFees: [{ fee: { amount: REFUND_FEE_CAP + 1n, token: BASE } }],
 });
-check("T3 vote-time cap is inside generateFeeBlock", voteOver.code === 2 && voteOver.counts.feeBuilds === 0 && voteOver.counts.publish === 0 && has(voteOver.lines, "vote fee is over the refund fee cap"));
-const builtBad = await run({ argv: [], feeOverride: 1n });
-check("T3 built fee block must match the vote", builtBad.code === 2 && builtBad.counts.publish === 0 && has(builtBad.lines, "built fee block does not match"));
+check("T3 vote-time cap is inside publishBuilder", voteOver.code === 3 && voteOver.counts.feeBuilds === 0 && voteOver.counts.publish === 1 && has(voteOver.lines, "REFUND_HOLD: publish error FeeOverCap") && existsSync(join(voteOver.dir, "STOP")) && existsSync(join(voteOver.dir, "refund", "intent.json")) && voteOver.client.lastFeeCall?.votesIsArray === true && voteOver.client.lastFeeCall?.blocksIsArray === true && typeof voteOver.client.lastFeeCall?.options?.generateFeeBlock === "function" && Array.isArray(voteOver.client.lastFeeCall?.options?.quotes));
+const builtBad = await run({ argv: sendArgv(infoT3), feeOverride: 1n });
+check("T3 built fee block must match the vote", builtBad.code === 3 && builtBad.counts.feeBuilds === 1 && builtBad.counts.publish === 1 && has(builtBad.lines, "REFUND_HOLD: publish error FeeBuilt") && existsSync(join(builtBad.dir, "STOP")) && existsSync(join(builtBad.dir, "refund", "intent.json")));
 const foreign = await run({
-  argv: [],
+  argv: sendArgv(infoT3),
   quotes: defaultQuotes(),
-  feeVotes: [{ fee: { amount: 1n, token: "keeta_notkta" } }],
+  voteFees: [{ fee: { amount: 1n, token: "keeta_notkta" } }],
 });
-check("T3 a non-KTA vote fee is refused", foreign.code === 2 && foreign.counts.feeBuilds === 0 && foreign.counts.publish === 0 && has(foreign.lines, "vote fee is non-KTA"));
+check("T3 a non-KTA vote fee is refused", foreign.code === 3 && foreign.counts.feeBuilds === 0 && foreign.counts.publish === 1 && has(foreign.lines, "REFUND_HOLD: publish error FeeForeign") && existsSync(join(foreign.dir, "STOP")) && existsSync(join(foreign.dir, "refund", "intent.json")));
 
 const dry = await run({ argv: [] });
 check("T4 dry run does not publish", dry.code === 0 && dry.counts.publish === 0 && dry.counts.send === 0 && dry.counts.recover === 0);
@@ -405,7 +417,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   const wrongCount = await run({ argv: sendArgv(info, { n: "13" }) });
   const wrongPlan = await run({ argv: sendArgv(info, { plan: `${info.plan.slice(0, -1)}0` }) });
   for (const [name, result] of [["total flag", missingTotal], ["count flag", missingCount], ["plan flag", missingPlan], ["total", wrongTotal], ["count", wrongCount], ["plan", wrongPlan]]) {
-    check(`T10 ${name} is refused`, result.code === 2 && result.counts.publish === 0 && has(result.lines, "REFUND_REFUSED:"));
+    check(`T10 ${name} is refused`, result.code === 2 && result.counts.publish === 0 && result.counts.quotes === 0 && result.counts.builds === 0 && has(result.lines, "REFUND_REFUSED:"));
   }
 }
 
@@ -424,6 +436,8 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   check("T11 landed finishes", landed.code === 0 && has(landed.lines, "REFUND_SENT_OK") && has(landed.lines, "BOOKS_OK"));
   check("T11 receipt and done exist", existsSync(join(landed.dir, "refund", "done.json")) && readdirSync(join(landed.dir, "refund")).some((name) => name.startsWith("receipt-")));
   check("T11 books backup exists", readdirSync(landed.dir).some((name) => name.startsWith("books.json.pre-refund-")));
+  const backupName = readdirSync(landed.dir).find((name) => name.startsWith("books.json.pre-refund-"));
+  check("T11 books backup is mode 0600", (statSync(join(landed.dir, backupName)).mode & 0o777) === 0o600);
   check("T11 accounted matches the chain", accounted(afterBooks) === landed.live.balance);
   check("T11 refunded and excluded stake is gone", [...EXCLUDED, ...Object.keys(EXPECT)].every((key) => {
     const full = [...afterBooks.share.stake.keys()].find((item) => item.includes(key)) ?? [...EXCLUDED].find((item) => item.includes(key));
@@ -581,6 +595,31 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
     });
     const intent = JSON.parse(readFileSync(join(recorded.dir, "refund", "intent.json"), "utf8"));
     check("T15 intent stores BlockHash toString", intent.block === good.hash.toString());
+    const payer = Account.fromSeed(Account.generateRandomSeed({ asString: true }), 0);
+    const feeBuilder = new sdk.Client.Builder({ account: payer, signer: payer });
+    const feeBlock = await feeBuilder.computeFeeBlock(
+      { blocks: [good], votes: [{ fee: { amount: 1000n, token: base }, issuer: payer }] },
+      {},
+      { network: 0x5382n, getPrevious: async () => good.hash.toString() },
+    );
+    const feeSend = feeBlock.operations.find((op) => op.type === 0 && op.amount === 1000n);
+    check("T15 a real fee block is sealed offline", Boolean(feeSend) && feeSend.token.comparePublicKey(base) === true);
+    const through = await run({
+      argv: sendArgv(info),
+      base,
+      baseText,
+      computeBlocks: () => ({ blocks: [good] }),
+      computeFeeBlock: async (staple) => feeBuilder.computeFeeBlock(
+        {
+          votes: (staple.votes ?? []).map((vote) => ({ ...vote, issuer: vote.issuer ?? payer })),
+          blocks: staple.blocks?.length ? staple.blocks : [good],
+        },
+        {},
+        { network: 0x5382n, getPrevious: async () => good.hash.toString() },
+      ),
+      onPublish: () => ({ from: "direct", voteStaple: { blocks: [{ hash: good.hash }] } }),
+    });
+    check("T15 publishBuilder runs the real fee block", through.counts.feeBuilds === 1 && through.counts.publish === 1 && !has(through.lines, "publish error") && !has(through.lines, "built fee block does not match"));
   }
 }
 
@@ -650,7 +689,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   const balanceOnly = await run({
     argv: sendArgv(info),
     onPublish: (_b, _o, ctx) => {
-      ctx.live.balance -= rawTotal + FEE;
+      ctx.live.balance -= rawTotal;
       return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
     },
   });
@@ -921,5 +960,235 @@ function rowsOf(result) {
 
 const none = await run({ argv: ["--verify"] });
 check("verify with no intent exits quietly", none.code === 0 && has(none.lines, "REFUND_VERIFY: no intent") && none.counts.seed === 0);
+
+{
+  const unknownMemo = await run({
+    argv: ["--no-quote"],
+    history: [{
+      voteStaple: {
+        timestamp: () => new Date("2026-10-20T12:00:00.000Z"),
+        blocksHash: { toString: () => "STAPLE" },
+        blocks: [{
+          account: INTAKE,
+          hash: {},
+          operations: [{ type: 0, external: MEMO, amount: 1n, token: BASE, to: "x" }],
+        }],
+      },
+    }, ...oldHistory()],
+  });
+  check("S2 an unreadable memo hash refuses", unknownMemo.code === 2 && has(unknownMemo.lines, "refund memo already on chain in block unknown"));
+}
+
+{
+  const early = await run({
+    argv: ["--no-quote"],
+    processes: () => {
+      const err = new Error("SECRET-BEFORE");
+      err.name = "BoomBefore";
+      throw err;
+    },
+  });
+  check("S3 an unexpected error before STOP is refused", early.code === 2 && has(early.lines, "REFUND_REFUSED: unexpected BoomBefore") && !has(early.lines, "SECRET-BEFORE") && !existsSync(join(early.dir, "STOP")));
+  let seen = 0;
+  const info = await plan();
+  const late = await run({
+    argv: sendArgv(info),
+    processes: () => {
+      seen += 1;
+      if (seen === 1) return [];
+      const err = new Error("SECRET-AFTER");
+      err.name = "BoomAfter";
+      throw err;
+    },
+  });
+  check("S3 an unexpected error after STOP holds", late.code === 3 && has(late.lines, "REFUND_HOLD: unexpected BoomAfter") && !has(late.lines, "SECRET-AFTER") && existsSync(join(late.dir, "STOP")) && !existsSync(join(late.dir, "refund", "intent.json")));
+}
+
+{
+  const unknownPending = await run({
+    argv: [],
+    onPending: (n) => {
+      if (n === 1) return null;
+      throw new Error("late pending");
+    },
+  });
+  check("S5 a pending read that throws is unknown", unknownPending.code === 0 && has(unknownPending.lines, "Pending block after quote: unknown") && has(unknownPending.lines, "REFUND_CHECK: pending block after quote") && !has(unknownPending.lines, "Pending block after quote: none"));
+}
+
+{
+  const emptyHash = await run({
+    argv: [],
+    computeBlocks: (sends) => ({
+      blocks: [{
+        hash: "",
+        account: INTAKE,
+        operations: sends.map((row) => ({
+          type: 0,
+          to: row.to,
+          token: row.token,
+          amount: row.amount,
+          external: row.external,
+        })),
+      }],
+    }),
+  });
+  check("S6 an empty block hash is refused", emptyHash.code === 2 && emptyHash.counts.quotes === 0 && emptyHash.counts.builds === 1 && emptyHash.counts.publish === 0 && !existsSync(join(emptyHash.dir, "STOP")) && !existsSync(join(emptyHash.dir, "refund", "intent.json")) && has(emptyHash.lines, "batch shape is wrong"));
+}
+
+{
+  const missingRoot = join(tmpdir(), "kore-proc-missing-refund");
+  const missing = await run({ argv: ["--no-quote"], useProc: true, procRoot: missingRoot });
+  check("N3 an unreadable process list is refused", missing.code === 2 && missing.counts.quotes === 0 && has(missing.lines, "REFUND_REFUSED: process list unreadable"));
+  const bareRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(bareRoot, "4"));
+  const bare = await run({ argv: ["--no-quote"], useProc: true, procRoot: bareRoot });
+  check("N3 an unreadable cmdline is refused", bare.code === 2 && has(bare.lines, "process list unreadable"));
+  const nodeRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(nodeRoot, "7"));
+  writeFileSync(join(nodeRoot, "7", "cmdline"), "node\0run.mjs\0");
+  writeFileSync(join(nodeRoot, "7", "cwd"), "not-a-link");
+  const nodeProc = await run({ argv: ["--no-quote"], useProc: true, procRoot: nodeRoot });
+  check("N3 an unreadable node cwd is refused", nodeProc.code === 2 && has(nodeProc.lines, "process list unreadable"));
+  const otherRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  mkdirSync(join(otherRoot, "8"));
+  writeFileSync(join(otherRoot, "8", "cmdline"), "bash\0");
+  symlinkSync("/tmp", join(otherRoot, "8", "cwd"));
+  const other = await run({ argv: ["--no-quote"], useProc: true, procRoot: otherRoot });
+  check("N3 a readable other process is not the runner", other.code === 0 && !has(other.lines, "process list unreadable"));
+  const secret = await run({
+    argv: ["--no-quote"],
+    processes: () => {
+      const err = new Error("SECRET-PROC");
+      err.name = "ProcessListUnreadable";
+      throw err;
+    },
+  });
+  check("N3 the refusal does not print the error text", secret.code === 2 && has(secret.lines, "REFUND_REFUSED: process list unreadable") && !has(secret.lines, "SECRET-PROC"));
+}
+
+{
+  const objectBalance = await run({ argv: ["--no-quote"], onBalance: () => ({ amount: 1n }) });
+  check("N5 an object balance is refused", objectBalance.code === 2 && has(objectBalance.lines, "balance read failed"));
+  const numberBalance = await run({ argv: ["--no-quote"], onBalance: () => 1 });
+  check("N5 a number balance is refused", numberBalance.code === 2 && has(numberBalance.lines, "balance read failed"));
+  const text = accounted(booksFromJson(JSON.parse(readFileSync(FIXTURE, "utf8")))).toString();
+  const stringBalance = await run({ argv: ["--no-quote"], onBalance: () => text });
+  check("N5 a base-10 integer string is accepted", stringBalance.code === 0 && has(stringBalance.lines, "REFUND_DRY_RUN_OK (no quote)"));
+}
+
+{
+  const { registerHooks } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "@keetanetwork/keetanet-client") {
+        return {
+          url: pathToFileURL("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/client/index.js").href,
+          shortCircuit: true,
+        };
+      }
+      return nextResolve(specifier, context);
+    },
+  });
+  const sdk = await import("@keetanetwork/keetanet-client");
+  check("T27 sdk module is 0.18.8", JSON.parse(readFileSync("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/package.json", "utf8")).version === "0.18.8");
+  const calls = [];
+  const realFrom = sdk.UserClient.fromNetwork;
+  sdk.UserClient.fromNetwork = function fromNetwork(network, signer, options) {
+    calls.push({ network, readOnly: signer === null, hasKey: Boolean(signer?.hasPrivateKey) });
+    return realFrom.call(this, network, signer, options);
+  };
+  const previousFetch = globalThis.fetch;
+  let unstubbed = 0;
+  const balanceText = accounted(booksFromJson(JSON.parse(readFileSync(FIXTURE, "utf8")))).toString();
+  globalThis.fetch = async (url) => {
+    const text = String(url);
+    const body = (() => {
+      if (text.includes("/representatives")) return { representatives: [] };
+      if (text.includes("/history")) return { history: [], nextKey: null };
+      if (text.includes("/balance/")) return { balance: balanceText };
+      if (text.includes("/pending")) return { account: INTAKE, block: null };
+      unstubbed += 1;
+      throw new Error(`unstubbed ${text}`);
+    })();
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  async function production(argv, extra = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    writeFileSync(join(dir, "books.json"), readFileSync(FIXTURE));
+    const lines = [];
+    const code = await main({
+      argv,
+      dir,
+      now: NOW,
+      output: (line) => lines.push(line),
+      systemctl: () => "inactive",
+      processes: () => [],
+      ...extra,
+    });
+    return { code, lines, dir };
+  }
+  try {
+    calls.length = 0;
+    const noQuote = await production(["--no-quote"]);
+    check("T27 no-quote uses one read-only client", noQuote.code === 0 && has(noQuote.lines, "REFUND_DRY_RUN_OK (no quote)") && has(noQuote.lines, "PLAN 578bd699c51acaa7c37699c7a8d679902dc41d52e8b85f875d8ef2a980ee6ea2") && calls.length === 1 && calls[0].readOnly === true && calls[0].hasKey === false && calls[0].network === "main");
+    calls.length = 0;
+    const verifyDir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    writeFileSync(join(verifyDir, "books.json"), readFileSync(FIXTURE));
+    mkdirSync(join(verifyDir, "refund"), { mode: 0o700 });
+    writeFileSync(join(verifyDir, "refund", "intent.json"), `${JSON.stringify({
+      block: "NOTHERE",
+      balanceBefore: balanceText,
+      rawTotal: "1",
+      total: "0.000000000000000001",
+      plan: "0",
+      published: "2026-10-20T12:00:00.000Z",
+    })}\n`);
+    const lines = [];
+    const verifiedCode = await main({
+      argv: ["--verify"],
+      dir: verifyDir,
+      now: NOW,
+      output: (line) => lines.push(line),
+      systemctl: () => "inactive",
+      processes: () => [],
+    });
+    check("T27 verify reads through the read-only client", verifiedCode === 3 && lines.some((line) => line.startsWith("REFUND_VERIFY: NOT_LANDED")) && calls.length === 1 && calls[0].readOnly === true && calls[0].hasKey === false);
+    calls.length = 0;
+    const quoteDir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    writeFileSync(join(quoteDir, "books.json"), readFileSync(FIXTURE));
+    writeFileSync(join(quoteDir, "seed.txt"), "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\n");
+    const quotedLines = [];
+    const quotedCode = await main({
+      argv: [],
+      dir: quoteDir,
+      now: NOW,
+      output: (line) => quotedLines.push(line),
+      systemctl: () => "inactive",
+      processes: () => [],
+    });
+    check("T27 quoted dry run reads before any signing client", quotedCode === 2 && quotedLines.some((line) => line.startsWith("REFUND dry-run")) && !quotedLines.some((line) => line.includes("history read failed")) && !quotedLines.some((line) => line.includes("balance read failed")) && quotedLines.some((line) => line.includes("seed is not the intake wallet")) && calls.length === 1 && calls[0].readOnly === true && calls[0].hasKey === false);
+    const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
+    raw.stake["keeta_not_a_real_key"] = (10n ** 18n).toString();
+    raw.operator = (BigInt(raw.operator) - 10n ** 18n).toString();
+    const badDir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    writeFileSync(join(badDir, "books.json"), JSON.stringify(raw));
+    calls.length = 0;
+    const badLines = [];
+    const badCode = await main({
+      argv: ["--no-quote"],
+      dir: badDir,
+      now: NOW,
+      output: (line) => badLines.push(line),
+      systemctl: () => "inactive",
+      processes: () => [],
+    });
+    check("T27 the real decoder refuses a bad address", badCode === 2 && badLines.some((line) => line.includes("address does not decode")) && calls.every((row) => row.readOnly === true && row.hasKey === false));
+    check("T27 the network stub saw no unstubbed fetch", unstubbed === 0);
+  } finally {
+    sdk.UserClient.fromNetwork = realFrom;
+    globalThis.fetch = previousFetch;
+  }
+}
 
 console.log(`refund checks ${passed}`);
