@@ -40,12 +40,45 @@ export function choosePack({ spendable, feePerTx = FEE_PER_TX, maxPack = BLOCK_T
   return Number(affordable);
 }
 
+export function bundleCap() {
+  const text = process.env.FEE_CAP_PER_BUNDLE_KTA;
+  const raw = text === undefined || text === "" ? "0.05" : text;
+  try {
+    const cap = fromKta(raw);
+    if (cap > 0n) return cap;
+  } catch { /* fall through */ }
+  return fromKta("0.05");
+}
+
+export class FeeOverCap extends Error {
+  constructor(fee, cap) {
+    super(`Fee ${fee.toString()} is over the ${cap.toString()} cap.`);
+    this.name = "FeeOverCap";
+    this.fee = fee;
+    this.cap = cap;
+  }
+}
+
+export function voteFeeTotal(staple) {
+  let total = 0n;
+  for (const vote of staple?.votes ?? []) {
+    const fee = vote?.fee;
+    if (fee === undefined || fee === null) continue;
+    const fees = Array.isArray(fee) ? fee : [fee];
+    for (const item of fees) {
+      if (item?.amount === undefined || item?.amount === null) continue;
+      total += BigInt(item.amount);
+    }
+  }
+  return total;
+}
+
 export function judgeQuote({ quote, ops, spendable, feePerTx = FEE_PER_TX }) {
   if (quote <= 0n || ops <= 0n) return { ok: false, learn: feePerTx, reason: "empty" };
   const per = quote / ops;
   if (per <= 0n) return { ok: false, learn: feePerTx, reason: "empty" };
   if (quote > spendable) return { ok: false, learn: feePerTx, reason: "reserve" };
-  if (per > feePerTx * 4n) return { ok: false, learn: feePerTx * 4n, reason: "climb" };
+  if (quote > bundleCap()) return { ok: false, learn: feePerTx, reason: "cap" };
   return { ok: true, learn: per, reason: "ok" };
 }
 
@@ -136,13 +169,15 @@ const normal = judgeQuote({ quote: BLOCK_FEE, ops: BLOCK_TX, spendable, feePerTx
 check("today's quote is accepted", normal.ok && normal.learn === FEE_PER_TX);
 const overCap = judgeQuote({ quote: BLOCK_FEE * 2n, ops: BLOCK_TX, spendable, feePerTx: FEE_PER_TX });
 check("a fee the old cap would refuse is accepted", overCap.ok && overCap.learn === doubled);
-const climb = judgeQuote({ quote: FEE_PER_TX * 100n * BLOCK_TX, ops: BLOCK_TX, spendable, feePerTx: FEE_PER_TX });
-check("a wild quote is not paid", !climb.ok && climb.reason === "climb");
-check("a wild quote only raises the remembered fee fourfold", climb.learn === FEE_PER_TX * 4n);
+const wild = judgeQuote({ quote: FEE_PER_TX * 100n * BLOCK_TX, ops: BLOCK_TX, spendable, feePerTx: FEE_PER_TX });
+check("a wild quote is not paid", !wild.ok && wild.reason === "cap");
+check("a wild quote does not raise the remembered fee", wild.learn === FEE_PER_TX);
 const reserveHit = judgeQuote({ quote: fromKta("3"), ops: 1n, spendable: fromKta("2"), feePerTx: FEE_PER_TX });
 check("a quote into the reserve is refused", !reserveHit.ok && reserveHit.reason === "reserve");
 const oneSend = judgeQuote({ quote: FEE_PER_TX * 20n, ops: 1n, spendable, feePerTx: FEE_PER_TX * 20n });
 check("a dispenser send above the old cap can fit", oneSend.ok);
+const payout = judgeQuote({ quote: fromKta("0.00404"), ops: 1n, spendable, feePerTx: FEE_PER_TX });
+check("a normal payout quote is under the cap", payout.ok && payout.reason === "ok");
 
 const bumped = runWindow({
   startBalance: fromKta("30"),
