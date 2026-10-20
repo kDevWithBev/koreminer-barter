@@ -22,6 +22,105 @@ function isOverCap(err) {
   return err instanceof FeeOverCap || err?.name === "FeeOverCap";
 }
 
+class FeeUnusable extends Error {
+  constructor() {
+    super("No usable fee.");
+    this.name = "FeeUnusable";
+  }
+}
+
+function isUnusable(err) {
+  return err instanceof FeeUnusable || err?.name === "FeeUnusable";
+}
+
+function readFeeAmount(item) {
+  if (item == null || typeof item !== "object") return null;
+  if (item.amount === undefined || item.amount === null || item.amount === "") return null;
+  try {
+    return BigInt(item.amount);
+  } catch {
+    return null;
+  }
+}
+
+function isBigintZero(item) {
+  return !!item && typeof item === "object" && typeof item.amount === "bigint" && item.amount === 0n;
+}
+
+function feeTokenText(token) {
+  if (typeof token === "string") return token;
+  if (typeof token?.id === "string") return token.id;
+  const key = token?.publicKeyString;
+  if (typeof key?.toString === "function") {
+    const text = key.toString();
+    if (text && text !== "[object Object]") return text;
+  }
+  if (typeof key?.get === "function") {
+    const text = key.get();
+    if (typeof text === "string") return text;
+  }
+  return "";
+}
+
+function tokenIsKta(token, base, baseText) {
+  if (token === undefined || token === null || token === "") return true;
+  if (typeof token?.comparePublicKey === "function") return token.comparePublicKey(base) === true;
+  if (base !== undefined && token === base) return true;
+  const text = feeTokenText(token);
+  if (!text) return false;
+  if (baseText && text === baseText) return true;
+  if (base?.id && text === base.id) return true;
+  const baseKey = base?.publicKeyString;
+  if (typeof baseKey?.toString === "function" && text === baseKey.toString()) return true;
+  return false;
+}
+
+function addressOf(value) {
+  if (value === undefined || value === null || value === "") return "none";
+  if (typeof value === "string") return value;
+  const text = feeTokenText(value);
+  return text || "none";
+}
+
+function formatFeeOptions(entries) {
+  const list = entries ?? [];
+  if (list.length === 0) return "none, none, none";
+  return list.map((entry) => {
+    const fee = entry && typeof entry === "object" && Object.prototype.hasOwnProperty.call(entry, "fee") ? entry.fee : entry;
+    if (fee === undefined || fee === null) return "none, none, none";
+    const fees = Array.isArray(fee) ? fee : [fee];
+    if (fees.length === 0) return "none, none, none";
+    return fees.map((item) => {
+      const amount = readFeeAmount(item);
+      const amountText = amount === null ? "none" : kta(amount);
+      return `${amountText}, ${addressOf(item?.token)}, ${addressOf(item?.payTo)}`;
+    }).join("; ");
+  }).join(" | ");
+}
+
+// One option per vote. Only a bigint 0n makes the vote free. A string "0" does not.
+export function selectFee(feeOrList, ctx = {}) {
+  const { base, baseText } = ctx;
+  if (feeOrList === undefined || feeOrList === null) return { kind: "none", amount: 0n };
+  const fees = Array.isArray(feeOrList) ? feeOrList : [feeOrList];
+  if (fees.length === 0) return { kind: "none", amount: 0n };
+  for (const item of fees) {
+    if (isBigintZero(item)) return { kind: "free", amount: 0n };
+  }
+  for (const item of fees) {
+    const amount = readFeeAmount(item);
+    if (amount === null) continue;
+    if (tokenIsKta(item?.token, base, baseText)) return { kind: "kta", amount };
+  }
+  return { kind: "foreign", amount: readFeeAmount(fees[0]) ?? 0n };
+}
+
+function nonKtaError(fee, cap) {
+  const err = new FeeOverCap(fee ?? 0n, cap);
+  err.nonKta = true;
+  return err;
+}
+
 export async function runShaft({
   dir = defaultDir,
   client,
@@ -44,6 +143,7 @@ export async function runShaft({
   const linksPath = `${dir}/links.json`;
 
   let overCapStep = null;
+  let refusedFeesNoted = false;
 
   function sayPublished(ok, paceMilli, fee, spent, left, elapsed) {
     console.log(
@@ -71,7 +171,8 @@ export async function runShaft({
       overCapStep = 0;
       const fee = err?.fee ?? 0n;
       const cap = err?.cap ?? bundleCap();
-      console.error(`ALERT Fee ${kta(fee)} KTA is over the ${kta(cap)} KTA cap. Backing off.`);
+      if (err?.nonKta) console.error("ALERT Non-KTA fee selected. Backing off.");
+      else console.error(`ALERT Fee ${kta(fee)} KTA is over the ${kta(cap)} KTA cap. Backing off.`);
     }
     const delay = Math.min(30_000 * 2 ** overCapStep, 600_000);
     overCapStep += 1;
@@ -80,6 +181,7 @@ export async function runShaft({
 
   function clearEpisode() {
     overCapStep = null;
+    refusedFeesNoted = false;
   }
 
   function rateWait() {
@@ -105,92 +207,90 @@ export async function runShaft({
     writeState(state);
   }
 
-  function isKtaFee(token) {
-    if (token === undefined || token === null || token === "") return true;
-    if (token === base) return true;
-    const text = feeTokenText(token);
-    if (!text) return false;
-    if (baseText && text === baseText) return true;
-    if (base?.id && text === base.id) return true;
-    const baseKey = base?.publicKeyString;
-    if (typeof baseKey?.toString === "function" && text === baseKey.toString()) return true;
-    return false;
-  }
-
-  function readFeeAmount(item) {
-    if (item == null || item.amount === undefined || item.amount === null || item.amount === "") return null;
-    try {
-      return BigInt(item.amount);
-    } catch {
-      return null;
-    }
-  }
-
-  function selectFee(feeOrList) {
-    if (feeOrList === undefined || feeOrList === null) return { kind: "none", amount: 0n };
-    const fees = Array.isArray(feeOrList) ? feeOrList : [feeOrList];
-    if (fees.length === 0) return { kind: "none", amount: 0n };
-    for (const item of fees) {
-      if (readFeeAmount(item) === 0n) return { kind: "free", amount: 0n };
-    }
-    for (const item of fees) {
-      const amount = readFeeAmount(item);
-      if (amount === null) continue;
-      const token = item?.token;
-      if (token === undefined || token === null) return { kind: "kta", amount };
-      if (typeof token?.comparePublicKey === "function") {
-        if (token.comparePublicKey(base) === true) return { kind: "kta", amount };
-        continue;
-      }
-      if (isKtaFee(token)) return { kind: "kta", amount };
-    }
-    return { kind: "foreign", amount: readFeeAmount(fees[0]) ?? 0n };
-  }
-
   function feeSum(quote) {
-    const picked = selectFee(quote?.fee);
-    if (picked.kind === "foreign") return { kta: 0n, foreign: picked.amount, refused: true };
-    if (picked.kind === "kta") return { kta: picked.amount, foreign: 0n, refused: false };
-    return { kta: 0n, foreign: 0n, refused: false };
+    const picked = selectFee(quote?.fee, { base, baseText });
+    if (picked.kind === "foreign") return { kta: 0n, foreign: picked.amount, refused: true, usable: true };
+    if (picked.kind === "kta") return { kta: picked.amount, foreign: 0n, refused: false, usable: true };
+    if (picked.kind === "free") return { kta: 0n, foreign: 0n, refused: false, usable: true };
+    return { kta: 0n, foreign: 0n, refused: false, usable: false };
   }
 
   function quotesFee(quotes) {
+    if (quotes == null) return { amount: 0n, foreign: false, shown: 0n, usable: true };
+    if (quotes.length === 0) return { amount: 0n, foreign: false, shown: 0n, usable: false };
     let ktaFee = 0n;
     let foreign = 0n;
     let refused = false;
-    for (const quote of quotes ?? []) {
+    let usable = false;
+    for (const quote of quotes) {
       const part = feeSum(quote);
       ktaFee += part.kta;
       foreign += part.foreign;
       if (part.refused) refused = true;
+      if (part.usable) usable = true;
     }
-    return { amount: ktaFee, foreign: refused, shown: refused ? ktaFee + foreign : ktaFee };
+    return { amount: ktaFee, foreign: refused, shown: refused ? ktaFee + foreign : ktaFee, usable };
   }
 
-  function feeTokenText(token) {
-    if (typeof token === "string") return token;
-    if (typeof token?.id === "string") return token.id;
-    const key = token?.publicKeyString;
-    if (typeof key?.toString === "function") {
-      const text = key.toString();
-      if (text && text !== "[object Object]") return text;
+  function noteRefusedFees(entries) {
+    if (refusedFeesNoted || overCapStep !== null) return;
+    refusedFeesNoted = true;
+    console.error(`Refused fee options: ${formatFeeOptions(entries)}`);
+  }
+
+  function sendTotals(block) {
+    let total = 0n;
+    let foreign = false;
+    let foreignAmount = 0n;
+    const ops = Array.isArray(block?.operations) ? block.operations : [];
+    for (const op of ops) {
+      const type = op?.type;
+      if (type !== 0 && type !== "SEND") continue;
+      let amount = 0n;
+      try {
+        if (op?.amount !== undefined && op?.amount !== null && op?.amount !== "") amount = BigInt(op.amount);
+      } catch {
+        amount = 0n;
+      }
+      if (!tokenIsKta(op?.token, base, baseText)) {
+        foreign = true;
+        foreignAmount += amount;
+        continue;
+      }
+      total += amount;
     }
-    if (typeof key?.get === "function") {
-      const text = key.get();
-      if (typeof text === "string") return text;
+    return { total, foreign, foreignAmount };
+  }
+
+  function assertBuiltFee(block, ktaFee, cap, votes) {
+    const built = sendTotals(block);
+    if (built.foreign) {
+      noteRefusedFees(votes);
+      throw nonKtaError(built.foreignAmount, cap);
     }
-    return "";
+    if (built.total > cap || built.total !== ktaFee) {
+      noteRefusedFees(votes);
+      throw new FeeOverCap(built.total, cap);
+    }
   }
 
   function cappedFeeBlock(cap = bundleCap()) {
     const taken = { fee: 0n, used: false };
     const generateFeeBlock = async (staple) => {
+      const votes = staple?.votes ?? [];
+      if (votes.length === 0) {
+        noteRefusedFees(votes);
+        throw new FeeUnusable();
+      }
       let ktaFee = 0n;
       let foreignFee = 0n;
       let foreign = false;
-      for (const vote of staple?.votes ?? []) {
-        const picked = selectFee(vote?.fee);
-        if (picked.kind === "none" || picked.kind === "free") continue;
+      let usable = false;
+      for (const vote of votes) {
+        const picked = selectFee(vote?.fee, { base, baseText });
+        if (picked.kind === "none") continue;
+        usable = true;
+        if (picked.kind === "free") continue;
         if (picked.kind === "foreign") {
           foreign = true;
           foreignFee += picked.amount;
@@ -198,18 +298,42 @@ export async function runShaft({
         }
         ktaFee += picked.amount;
       }
-      if (foreign || ktaFee > cap) throw new FeeOverCap(foreign ? ktaFee + foreignFee : ktaFee, cap);
+      if (!usable) {
+        noteRefusedFees(votes);
+        throw new FeeUnusable();
+      }
+      if (foreign) {
+        noteRefusedFees(votes);
+        throw nonKtaError(foreignFee, cap);
+      }
+      if (ktaFee > cap) {
+        noteRefusedFees(votes);
+        throw new FeeOverCap(ktaFee, cap);
+      }
+      const builder = client.initBuilder();
+      const block = await builder.computeFeeBlock(staple);
+      assertBuiltFee(block, ktaFee, cap, votes);
       taken.fee = ktaFee;
       taken.used = true;
-      const builder = client.initBuilder();
-      return builder.computeFeeBlock(staple);
+      return block;
     };
     return { generateFeeBlock, taken };
   }
 
   async function publishCapped(builder, quotes, cap = bundleCap()) {
     const quoted = quotesFee(quotes);
-    if (quoted.foreign || quoted.amount > cap) throw new FeeOverCap(quoted.shown, cap);
+    if (quotes != null && quoted.foreign) {
+      noteRefusedFees(quotes);
+      throw nonKtaError(quoted.shown, cap);
+    }
+    if (quotes != null && !quoted.usable) {
+      noteRefusedFees(quotes);
+      throw new FeeUnusable();
+    }
+    if (quoted.amount > cap) {
+      noteRefusedFees(quotes);
+      throw new FeeOverCap(quoted.amount, cap);
+    }
     const { generateFeeBlock, taken } = cappedFeeBlock(cap);
     const result = await client.publishBuilder(builder, { generateFeeBlock, quotes });
     return { result, fee: taken.used ? taken.fee : 0n };
@@ -388,7 +512,18 @@ export async function runShaft({
       if (blocks.length > 0 && typeof client.getQuotes === "function") quotes = await client.getQuotes(blocks);
       const quoted = quotesFee(quotes);
       const cap = bundleCap();
-      if (quoted.foreign || quoted.amount > cap) throw new FeeOverCap(quoted.shown, cap);
+      if (quotes != null && quoted.foreign) {
+        noteRefusedFees(quotes);
+        throw nonKtaError(quoted.shown, cap);
+      }
+      if (quotes != null && !quoted.usable) {
+        noteRefusedFees(quotes);
+        throw new FeeUnusable();
+      }
+      if (quoted.amount > cap) {
+        noteRefusedFees(quotes);
+        throw new FeeOverCap(quoted.amount, cap);
+      }
       const { generateFeeBlock, taken } = cappedFeeBlock();
       const recovered = await client.recover(true, { generateFeeBlock, quotes });
       clearEpisode();
@@ -437,6 +572,8 @@ export async function runShaft({
     if (isOverCap(err)) {
       const delay = armEpisode(err);
       await sleep(delay);
+    } else if (isUnusable(err)) {
+      await sleep(30000);
     } else {
       console.error("Recover failed.", err instanceof Error ? err.message : "unknown");
     }
@@ -534,26 +671,39 @@ function settlePayout(koreBal) {
     const built = await builder.computeBlocks();
     await pauseForRate();
     const quotes = await client.getQuotes(built.blocks);
-    const quoted = quotesFee(quotes);
-    if (quoted.foreign) throw new FeeOverCap(quoted.shown, payoutFeeCap());
+    const quoted = quotes == null
+      ? { amount: 0n, foreign: false, shown: 0n, usable: false }
+      : quotesFee(quotes);
+    if (quoted.foreign) {
+      noteRefusedFees(quotes);
+      throw nonKtaError(quoted.shown, payoutFeeCap());
+    }
+    if (!quoted.usable) {
+      noteRefusedFees(quotes);
+      await sleep(30000);
+      return "queued";
+    }
     const fee = quoted.amount;
     const spendable = wallet > RESERVE ? wallet - RESERVE : 0n;
-    const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX, cap: payoutFeeCap() });
-    if (!judged.ok) {
-      if (judged.reason === "cap") {
-        const line = `ALERT Payout fee ${kta(fee)} KTA is over the ${kta(payoutFeeCap())} KTA payout cap. Payout stays queued.`;
-        if (line !== payoutBlockNoted) {
-          payoutBlockNoted = line;
-          console.error(line);
+    if (fee > 0n) {
+      const judged = judgeQuote({ quote: fee, ops: 1n, spendable, feePerTx: state.feePerTx ?? FEE_PER_TX, cap: payoutFeeCap() });
+      if (!judged.ok) {
+        if (judged.reason === "cap") {
+          const line = `ALERT Payout fee ${kta(fee)} KTA is over the ${kta(payoutFeeCap())} KTA payout cap. Payout stays queued.`;
+          if (line !== payoutBlockNoted) {
+            payoutBlockNoted = line;
+            noteRefusedFees(quotes);
+            console.error(line);
+          }
+          await sleep(30000);
+          return "queued";
         }
-        await sleep(30000);
-        return "queued";
+        state.done = Array.isArray(state.done) ? state.done : [];
+        if (!state.done.includes(row.from)) state.done.push(row.from);
+        writeState(state);
+        console.log(judged.reason === "reserve" ? "KORE waiting. Fee would spend the reserve." : "Skip KORE. Quote", kta(fee), "KTA.");
+        return "skip";
       }
-      state.done = Array.isArray(state.done) ? state.done : [];
-      if (!state.done.includes(row.from)) state.done.push(row.from);
-      writeState(state);
-      console.log(judged.reason === "reserve" ? "KORE waiting. Fee would spend the reserve." : "Skip KORE. Quote", kta(fee), "KTA.");
-      return "skip";
     }
     rollPayoutFeeDay();
     if (state.payoutFeeSpent + fee > payoutFeeBudget()) {
@@ -591,7 +741,7 @@ function settlePayout(koreBal) {
       const planNow = pace({ balance: left, remainingMs: remaining, reserve: RESERVE, feePerTx: state.feePerTx ?? FEE_PER_TX });
       sayPublished(published.result?.publish === true || Boolean(published.result?.voteStaple), planNow.tpsMilli, published.fee, state.spent, left, 0);
     } catch (err) {
-      if (isOverCap(err)) {
+      if (isOverCap(err) || isUnusable(err)) {
         if (!(await client.pendingBlock())) {
           clearIntent();
           clearFloor(floor);
@@ -755,24 +905,39 @@ function settlePayout(koreBal) {
       }
       await pauseForRate();
       const quotes = await client.getQuotes(built.blocks);
-      const quoted = quotesFee(quotes);
-      if (quoted.foreign) throw new FeeOverCap(quoted.shown, bundleCap());
-      const total = quoted.amount;
-      const judged = judgeQuote({
-        quote: total,
-        ops: BigInt(ops),
-        spendable: plan.spendable,
-        feePerTx: state.feePerTx,
-      });
-      if (!judged.ok) {
-        if (judged.reason === "cap") throw new FeeOverCap(total, bundleCap());
-        state.feePerTx = judged.learn;
-        writeState(state);
-        console.log(judged.reason === "reserve" ? "Quote would spend the payout reserve. Quote" : "Skip. Quote", kta(total), "KTA. Ops", ops);
+      const quoted = quotes == null
+        ? { amount: 0n, foreign: false, shown: 0n, usable: false }
+        : quotesFee(quotes);
+      if (quoted.foreign) {
+        noteRefusedFees(quotes);
+        throw nonKtaError(quoted.shown, bundleCap());
+      }
+      if (!quoted.usable) {
+        noteRefusedFees(quotes);
         await sleep(30000);
         continue;
       }
-      state.feePerTx = judged.learn;
+      const total = quoted.amount;
+      if (total > 0n) {
+        const judged = judgeQuote({
+          quote: total,
+          ops: BigInt(ops),
+          spendable: plan.spendable,
+          feePerTx: state.feePerTx,
+        });
+        if (!judged.ok) {
+          if (judged.reason === "cap") {
+            noteRefusedFees(quotes);
+            throw new FeeOverCap(total, bundleCap());
+          }
+          state.feePerTx = judged.learn;
+          writeState(state);
+          console.log(judged.reason === "reserve" ? "Quote would spend the payout reserve. Quote" : "Skip. Quote", kta(total), "KTA. Ops", ops);
+          await sleep(30000);
+          continue;
+        }
+        state.feePerTx = judged.learn;
+      }
 
       const before = await client.balance(base);
       const published = await publishCapped(builder, quotes);
@@ -809,6 +974,10 @@ function settlePayout(koreBal) {
         await sleep(delay);
         continue;
       }
+      if (isUnusable(err)) {
+        await sleep(30000);
+        continue;
+      }
       const message = err instanceof Error ? err.message : "unknown";
       console.error("Retry.", message);
       if (message.includes("existing vote for a successor")) {
@@ -818,6 +987,10 @@ function settlePayout(koreBal) {
           if (isOverCap(recoverErr)) {
             const delay = armEpisode(recoverErr);
             await sleep(delay);
+            continue;
+          }
+          if (isUnusable(recoverErr)) {
+            await sleep(30000);
             continue;
           }
           console.error("Recover failed.", recoverErr instanceof Error ? recoverErr.message : "unknown");

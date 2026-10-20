@@ -5,6 +5,7 @@ const start = Date.parse("2026-10-18T15:00:00.000Z");
 const LINE = "Picks off. Payouts only.";
 const FEE6 = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Backing off.";
 const QUOTE_OVER = "ALERT Fee 0.06000 KTA is over the 0.05000 KTA cap. Backing off.";
+const NON_KTA = "ALERT Non-KTA fee selected. Backing off.";
 let passed = 0;
 
 function check(name, ok, extra = "") {
@@ -98,7 +99,7 @@ try {
     clock: start,
   });
   const foreignAlerts = alerts(foreign.errors);
-  check("a vote with only a non-KTA option is refused", foreign.client.publishes.length === 0 && foreign.client.feeBlockBuilds === 0 && foreignAlerts.length === 1 && /^ALERT Fee \d+\.\d{5} KTA is over the 0\.05000 KTA cap\. Backing off\.$/.test(foreignAlerts[0]), foreignAlerts.join("\n"));
+  check("a vote with only a non-KTA option is refused", foreign.client.publishes.length === 0 && foreign.client.feeBlockBuilds === 0 && foreignAlerts.length === 1 && foreignAlerts[0] === NON_KTA, foreignAlerts.join("\n"));
 
   const freeBooks = makeBooks(false);
   const free = await runCase({
@@ -150,7 +151,7 @@ try {
     steps: 1,
     clock: start,
   });
-  check("comparePublicKey false is foreign", unmatched.client.publishes.length === 0 && unmatched.client.feeBlockBuilds === 0 && alerts(unmatched.errors).length === 1, alerts(unmatched.errors).join("\n"));
+  check("comparePublicKey false is foreign", unmatched.client.publishes.length === 0 && unmatched.client.feeBlockBuilds === 0 && alerts(unmatched.errors)[0] === NON_KTA, alerts(unmatched.errors).join("\n"));
 
   const quoteBooks = makeBooks(false);
   const quoteClient = makeClient(quoteBooks, { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
@@ -175,7 +176,7 @@ try {
   }));
   const foreignQuote = await runCase({ books: foreignQuoteBooks, client: foreignQuoteClient, steps: 1, clock: start });
   const foreignQuoteAlerts = alerts(foreignQuote.errors);
-  check("a non-KTA quote is refused", foreignQuote.client.publishes.length === 0 && foreignQuote.client.feeBlockBuilds === 0 && foreignQuoteAlerts.length === 1 && /^ALERT Fee \d+\.\d{5} KTA is over the 0\.05000 KTA cap\. Backing off\.$/.test(foreignQuoteAlerts[0]), foreignQuoteAlerts.join("\n"));
+  check("a non-KTA quote is refused", foreignQuote.client.publishes.length === 0 && foreignQuote.client.feeBlockBuilds === 0 && foreignQuoteAlerts.length === 1 && foreignQuoteAlerts[0] === NON_KTA, foreignQuoteAlerts.join("\n"));
 
   process.env.PICKS_OFF = "1";
   const offBooks = makeBooks(true);

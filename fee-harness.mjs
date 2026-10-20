@@ -5,7 +5,7 @@ import { accounted, booksToJson, createBooks, ingest } from "./books.mjs";
 import { startMs } from "./ledger.mjs";
 import { due } from "./share.mjs";
 import { fromKta } from "./pace.mjs";
-import { runShaft } from "./run.mjs";
+import { selectFee, runShaft } from "./run.mjs";
 
 const DAY = 86_400_000;
 export const ALICE = "keeta_alice";
@@ -62,9 +62,16 @@ export function makeClient(books, options = {}) {
           }
           return { blocks: [{ operations: this.ops.map((op) => ({ ...op })), account: "shaft" }] };
         },
-        async computeFeeBlock() {
+        async computeFeeBlock(staple) {
           client.feeBlockBuilds += 1;
-          return { kind: "fee", operations: [] };
+          if (typeof client.feeBlock === "function") return client.feeBlock(staple);
+          const operations = [];
+          for (const vote of staple?.votes ?? []) {
+            const picked = selectFee(vote?.fee, { base: { id: "base" }, baseText: "base" });
+            if (picked.kind !== "kta" || picked.amount === 0n) continue;
+            operations.push({ type: 0, amount: picked.amount, token: { id: "base" } });
+          }
+          return { kind: "fee", operations };
         },
       };
       return builder;
