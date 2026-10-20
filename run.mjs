@@ -95,8 +95,13 @@ export async function runShaft({
   function rateWait() {
     const last = Number(state.lastPublishMs) || 0;
     if (!last) return 0;
+    const at = now();
+    if (last > at) {
+      state.lastPublishMs = at;
+      writeState(state);
+    }
     const gap = minPublishGapMs();
-    const elapsed = now() - last;
+    const elapsed = at - Number(state.lastPublishMs);
     return elapsed >= gap ? 0 : gap - elapsed;
   }
 
