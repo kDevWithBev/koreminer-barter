@@ -54,7 +54,26 @@ export async function runShaft({
   const linksPath = `${dir}/links.json`;
 
   let overCapStep = null;
-  let paidFee = 0n;
+
+  function sayPublished(ok, paceMilli, fee, spent, left, elapsed) {
+    console.log(
+      "Published",
+      ok,
+      "pace",
+      (Number(paceMilli) / 1000).toFixed(2),
+      "fee",
+      kta(fee),
+      "KTA",
+      "spent",
+      kta(spent),
+      "KTA",
+      "left",
+      kta(left),
+      "cycle",
+      (elapsed / 1000).toFixed(1),
+      "s",
+    );
+  }
 
   function armEpisode(err) {
     const first = overCapStep === null;
@@ -136,21 +155,26 @@ export async function runShaft({
   }
 
   function cappedFeeBlock() {
-    return async (staple) => {
+    const taken = { fee: 0n, used: false };
+    const generateFeeBlock = async (staple) => {
       const { ktaFee, foreign } = ktaAndForeign(staple);
       const cap = bundleCap();
       if (foreign > 0n || ktaFee > cap) throw new FeeOverCap(foreign > 0n ? ktaFee + foreign : ktaFee, cap);
-      paidFee = ktaFee;
+      taken.fee = ktaFee;
+      taken.used = true;
       const builder = client.initBuilder();
       return builder.computeFeeBlock(staple);
     };
+    return { generateFeeBlock, taken };
   }
 
   async function publishCapped(builder, quotes) {
     const quoted = quotesFee(quotes);
     const cap = bundleCap();
     if (quoted > cap) throw new FeeOverCap(quoted, cap);
-    return client.publishBuilder(builder, { generateFeeBlock: cappedFeeBlock(), quotes });
+    const { generateFeeBlock, taken } = cappedFeeBlock();
+    const result = await client.publishBuilder(builder, { generateFeeBlock, quotes });
+    return { result, fee: taken.used ? taken.fee : 0n };
   }
 
   function clampFeePerTx(value) {
@@ -303,9 +327,14 @@ export async function runShaft({
       const quoted = quotesFee(quotes);
       const cap = bundleCap();
       if (quoted > cap) throw new FeeOverCap(quoted, cap);
-      await client.recover(true, { generateFeeBlock: cappedFeeBlock(), quotes });
+      const { generateFeeBlock, taken } = cappedFeeBlock();
+      const recovered = await client.recover(true, { generateFeeBlock, quotes });
       clearEpisode();
       notePublish();
+      const left = await client.balance(base);
+      const remaining = state.windowStart + DAY_MS - now();
+      const planNow = pace({ balance: left, remainingMs: remaining, reserve: RESERVE, feePerTx: state.feePerTx ?? FEE_PER_TX });
+      sayPublished(recovered?.publish === true || Boolean(recovered?.voteStaple), planNow.tpsMilli, taken.used ? taken.fee : 0n, state.spent, left, 0);
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown";
       if (message.includes("enough voting power") || message.includes("INSUFFICIENT_VOTING_WEIGHT")) {
@@ -466,9 +495,13 @@ function settlePayout(koreBal) {
     writeJson(intentPath, intent);
     writeFileSync(floorPath, `${floor.toString()}\n`, { mode: 0o600 });
     try {
-      await publishCapped(builder, quotes);
+      const published = await publishCapped(builder, quotes);
       clearEpisode();
       notePublish();
+      const left = await client.balance(base);
+      const remaining = state.windowStart + DAY_MS - now();
+      const planNow = pace({ balance: left, remainingMs: remaining, reserve: RESERVE, feePerTx: state.feePerTx ?? FEE_PER_TX });
+      sayPublished(published.result?.publish === true || Boolean(published.result?.voteStaple), planNow.tpsMilli, published.fee, state.spent, left, 0);
     } catch (err) {
       if (isOverCap(err)) {
         if (!(await client.pendingBlock())) {
@@ -619,7 +652,7 @@ function settlePayout(koreBal) {
       state.feePerTx = judged.learn;
 
       const before = await client.balance(base);
-      const result = await publishCapped(builder, quotes);
+      const published = await publishCapped(builder, quotes);
       clearEpisode();
       const after = await client.balance(base);
       const drop = before > after ? before - after : total;
@@ -629,23 +662,7 @@ function settlePayout(koreBal) {
       notePublished(books, drop, now());
       saveBooks(books);
       const elapsed = now() - started;
-      console.log(
-        "Published",
-        result.publish === true || Boolean(result.voteStaple),
-        "pace",
-        (Number(plan.tpsMilli) / 1000).toFixed(2),
-        "fee",
-        kta(paidFee),
-        "KTA",
-        "spent",
-        kta(state.spent),
-        "KTA",
-        "left",
-        kta(after),
-        "cycle",
-        (elapsed / 1000).toFixed(1),
-        "s",
-      );
+      sayPublished(published.result?.publish === true || Boolean(published.result?.voteStaple), plan.tpsMilli, published.fee, state.spent, after, elapsed);
 
       const koreNow = await client.balance(kore);
       if (koreNow > koreStart) {
