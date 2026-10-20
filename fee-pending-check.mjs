@@ -19,10 +19,18 @@ const youngIntent = {
   key: "kore-alice",
   floor: (1_000_000n - due).toString(),
 };
+function pendingPick(date, hash) {
+  return {
+    hash: { toString() { return hash; } },
+    date,
+    operations: [{ type: 0, to: { id: "dust" }, amount: 1n, token: { id: "base" }, external: "pick" }],
+  };
+}
+
 const youngClient = makeClient(youngBooks, {
   pickQuote: fromKta("0.006"),
   payoutQuote: fromKta("0.00404"),
-  pending: { date: new Date(start) },
+  pending: pendingPick(new Date(start), "young-1"),
 });
 youngClient.recoverError = new Error("INSUFFICIENT_VOTING_WEIGHT");
 const youngSnaps = [];
@@ -65,7 +73,7 @@ const expClient = makeClient(expBooks, {
   pickQuote: fromKta("0.006"),
   payoutQuote: fromKta("0.00404"),
   voteFee: fromKta("6"),
-  pending: { date: new Date(start) },
+  pending: pendingPick(new Date(start), "exp-1"),
 });
 const expYoung = [];
 let opened = false;
@@ -103,10 +111,10 @@ const expired = await runCase({
   },
 });
 check("an over-cap recover keeps the pending block while it is young", expYoung.length > 0 && expYoung.every((row) => row.pending && row.intent && row.pubs === 0 && row.builds === 0), JSON.stringify(expYoung));
-check("a young over-cap recover does not rebuild a fee block", expClient.feeBlockBuilds === expired.client.publishes.filter((row) => row.kind === "pick").length);
+check("a young over-cap recover does not rebuild a fee block", expYoung.every((row) => row.builds === 0) && expired.client.feeBlockBuilds === expired.client.publishes.length, `${expired.client.feeBlockBuilds} ${expired.client.publishes.map((row) => row.kind).join(",")}`);
 check("the intent is kept until the pending block expires", expYoung.every((row) => row.intent) && !existsSync(join(expired.dir, "payout-intent.json")));
-check("the expired payout is marked missed", expired.logs.some((line) => line.includes("KORE send did not land")));
-check("the missed wallet is not paid again", expired.client.publishes.every((row) => row.kind !== "payout"), JSON.stringify(expired.client.publishes.map((row) => row.kind)));
+check("the expired payout is marked missed", expired.logs.some((line) => line === "KORE send did not land. Nothing was marked paid. Payout stays queued."));
+check("the missed payout stays queued and retries once", expired.client.publishes.filter((row) => row.kind === "payout").length === 1, JSON.stringify(expired.client.publishes.map((row) => row.kind)));
 check("the missed wallet is finished for this close", readState(expired.dir).done.includes(ALICE), JSON.stringify(readState(expired.dir).done));
 
 const retryBooks = makeBooks(true);

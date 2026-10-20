@@ -159,6 +159,11 @@ export function due(state, from) {
   return counted > paid ? counted - paid : 0n;
 }
 
+export function addPaid(state, from, amount) {
+  if (amount <= 0n || amount > due(state, from)) throw new Error("payout does not match what is due");
+  add(state.paid, from, amount);
+}
+
 export function markPaid(state, from, amount) {
   if (amount <= 0n || amount !== due(state, from)) throw new Error("payout does not match what is due");
   add(state.paid, from, amount);

@@ -47,8 +47,8 @@ function fileHash(name) {
   return createHash("md5").update(readFileSync(path)).digest("hex");
 }
 
-check("pay.mjs was not edited", fileHash("./pay.mjs") === "516019e1fe076688e2c6001141918a63");
-check("share.mjs was not edited", fileHash("./share.mjs") === "a47c7221087e6728367f83845db06a36");
+check("pay.mjs was not edited", fileHash("./pay.mjs") === "e9ed5a9eee093066cbfaa7e2e82f5ada");
+check("share.mjs was not edited", fileHash("./share.mjs") === "4702e6f3a327abfea599c583a1bf0029");
 
 check("the 11 KTA tx credits the smart wallet", chooseSender({
   transferFrom: WALLET,

@@ -53,7 +53,7 @@ export function makeClient(books, options = {}) {
     initBuilder() {
       const builder = {
         ops: [],
-        send(to, amount, token, key) { this.ops.push({ to, amount, token, key }); },
+        send(to, amount, token, key) { this.ops.push({ type: 0, to, amount, token, key, external: key }); },
         async computeBlocks() {
           if (client.fixedOps) {
             const ops = this.ops.slice(0, client.fixedOps);
@@ -77,7 +77,14 @@ export function makeClient(books, options = {}) {
       return builder;
     },
     quoteFor(block) {
-      const payout = (block?.operations ?? []).some((op) => op.token?.id === "kore");
+      const payout = (block?.operations ?? []).some((op) => {
+        if (op.token?.id === "kore") return true;
+        const key = op.token?.publicKeyString;
+        try {
+          if (typeof key?.get === "function" && key.get() === koreId) return true;
+        } catch { /* not an account */ }
+        return false;
+      });
       return payout ? client.payoutQuote : client.pickQuote;
     },
     votesOf(payout) {
@@ -114,12 +121,17 @@ export function makeClient(books, options = {}) {
     async recover(publish, options) {
       client.recoverCalls += 1;
       if (client.recoverError) throw client.recoverError;
-      if (options?.generateFeeBlock) await options.generateFeeBlock({ votes: client.votesOf(false) });
+      const pending = await client.pendingBlock();
+      if (!pending) return null;
+      let feeBlock = null;
+      if (options?.generateFeeBlock) feeBlock = await options.generateFeeBlock({ votes: client.votesOf(false) });
       if (publish !== false) {
         client.publishes.push({ kind: "recover" });
         client.pending = null;
       }
-      return { publish: true };
+      const blocks = [];
+      if (feeBlock) blocks.push(feeBlock);
+      return { blocks, votes: client.votesOf(false) };
     },
   };
   return client;
@@ -135,6 +147,10 @@ export async function runCase({
   clock = Date.parse("2026-10-18T15:00:00.000Z"),
   onSleep = null,
   prepare = null,
+  accountFrom = null,
+  koreAccount = null,
+  base = null,
+  baseText = null,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "kore-fee-"));
   const openBooks = books ?? makeBooks(false);
@@ -156,11 +172,11 @@ export async function runCase({
     await runShaft({
       dir,
       client: fake,
-      base: { id: "base" },
-      baseText: "base",
+      base: base ?? { id: "base" },
+      baseText: baseText ?? "base",
       dustAccount: { id: "dust" },
-      koreAccount: { id: "kore" },
-      accountFrom: () => ({ id: "dest" }),
+      koreAccount: koreAccount ?? { id: "kore" },
+      accountFrom: accountFrom ?? (() => ({ id: "dest" })),
       now: () => time.t,
       sleep: async (ms) => {
         time.t += ms;

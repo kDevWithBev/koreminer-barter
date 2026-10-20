@@ -1,5 +1,5 @@
 // Payout decisions. Nothing here publishes a block.
-import { due, markPaid, whole } from "./share.mjs";
+import { addPaid, due, whole } from "./share.mjs";
 
 export function choosePayout(share, { intake, sink, skip = [] }) {
   const done = new Set(skip);
@@ -35,10 +35,20 @@ export function judgeIntent(balance, intent) {
 }
 
 export function applyPaid(share, intent) {
-  const amount = BigInt(intent.amount);
-  const owed = due(share, intent.from);
-  if (owed === 0n) return "done";
-  if (owed !== amount) return "halt";
-  markPaid(share, intent.from, amount);
+  const from = typeof intent?.from === "string" ? intent.from : "";
+  const key = typeof intent?.key === "string" ? intent.key : "";
+  const prefix = `kore-${from}-`;
+  if (!from || !key.startsWith(prefix)) return "halt";
+  const rest = key.slice(prefix.length);
+  if (!/^[0-9]+$/.test(rest)) return "halt";
+  let amount = 0n;
+  try { amount = BigInt(intent.amount); } catch { return "halt"; }
+  const count = BigInt(rest);
+  const paid = share.paid.get(from) ?? 0n;
+  const owed = due(share, from);
+  if (paid >= count) return "done";
+  if (count - paid !== amount) return "halt";
+  if (owed < amount) return "halt";
+  addPaid(share, from, amount);
   return "marked";
 }

@@ -276,7 +276,9 @@ export async function runShaft({
     }
   }
 
-  function cappedFeeBlock(cap = bundleCap()) {
+  function cappedFeeBlock(cap) {
+    // 0n is a real cap (the day's payout room is gone). Never replace it with the bundle default.
+    if (cap === undefined) cap = bundleCap();
     const taken = { fee: 0n, used: false };
     const generateFeeBlock = async (staple) => {
       const votes = staple?.votes ?? [];
@@ -322,7 +324,9 @@ export async function runShaft({
     return { generateFeeBlock, taken };
   }
 
-  async function publishCapped(builder, quotes, cap = bundleCap()) {
+  async function publishCapped(builder, quotes, cap) {
+    // 0n is a real cap. A default parameter would be safe in JS, but do not treat 0n as missing.
+    if (cap === undefined) cap = bundleCap();
     const quoted = quotesFee(quotes);
     if (quotes != null && quoted.foreign) {
       noteRefusedFees(quotes);
@@ -498,50 +502,58 @@ export async function runShaft({
     return when;
   }
 
+  function pendingBlocksOf(pending) {
+    if (Array.isArray(pending?.blocks)) return pending.blocks;
+    if (Array.isArray(pending?.operations)) return [pending];
+    return [];
+  }
+
   function pendingOperations(pending) {
     const ops = [];
-    for (const block of Array.isArray(pending?.blocks) ? pending.blocks : []) {
+    for (const block of pendingBlocksOf(pending)) {
       for (const op of Array.isArray(block?.operations) ? block.operations : []) ops.push(op);
     }
     return ops;
   }
 
-  function partyText(value) {
+  function accountKey(value) {
     if (value === undefined || value === null || value === "") return "";
     if (typeof value === "string") return value;
-    if (typeof value?.id === "string") return value.id;
-    const key = value?.publicKeyString;
-    if (typeof key?.toString === "function") {
-      const text = key.toString();
-      if (text && text !== "[object Object]") return text;
+    const key = value.publicKeyString;
+    if (key && typeof key.get === "function") {
+      try {
+        const text = key.get();
+        if (typeof text === "string" && text) return text;
+      } catch { /* the string form is next */ }
     }
-    if (typeof key?.get === "function") {
-      const text = key.get();
-      if (typeof text === "string") return text;
+    if (key && typeof key.toString === "function") {
+      const text = key.toString();
+      if (typeof text === "string" && text && text !== "[object Object]") return text;
+    }
+    if (typeof value.id === "string" && value.id) return value.id;
+    return "";
+  }
+
+  function isKoreSendToken(token) {
+    const text = accountKey(token);
+    if (!text) return false;
+    const koreText = accountKey(koreAccount);
+    if (koreText && text === koreText) return true;
+    return text === kore;
+  }
+
+  function hashText(hash) {
+    if (typeof hash === "string" && hash) return hash;
+    if (hash && typeof hash.toString === "function") {
+      const text = hash.toString();
+      if (typeof text === "string" && text && text !== "[object Object]") return text;
     }
     return "";
   }
 
-  function isKoreToken(token) {
-    if (token === koreAccount) return true;
-    if (token?.id && koreAccount?.id && token.id === koreAccount.id) return true;
-    const text = partyText(token);
-    if (!text) return false;
-    if (text === kore || text === koreAccount?.id) return true;
-    const accountKey = koreAccount?.publicKeyString;
-    if (typeof accountKey?.toString === "function" && text === accountKey.toString()) return true;
-    return false;
-  }
-
-  function isKoreSend(op) {
-    const type = op?.type;
-    const send = type === undefined || type === null || type === 0 || type === "0" || type === "SEND";
-    return send && isKoreToken(op?.token);
-  }
-
   function isPendingPayout(pending) {
     const intent = readIntent();
-    if (!intent || typeof intent.from !== "string") return false;
+    if (!intent || typeof intent.from !== "string" || typeof intent.key !== "string") return false;
     let owed = 0n;
     try { owed = BigInt(intent.amount); } catch { return false; }
     if (owed <= 0n) return false;
@@ -549,29 +561,30 @@ export async function runShaft({
     if (ops.length === 0) return false;
     let dest = null;
     try { dest = accountFrom(intent.from); } catch { dest = null; }
-    const destText = partyText(dest);
+    const destText = accountKey(dest);
     let sum = 0n;
     for (const op of ops) {
-      if (!isKoreSend(op)) return false;
-      const toText = partyText(op?.to);
-      if (!((destText && toText === destText) || toText === intent.from || op?.to === dest)) return false;
-      try {
-        if (op?.amount === undefined || op?.amount === null) return false;
-        sum += BigInt(op.amount);
-      } catch {
-        return false;
-      }
+      if (op?.type !== 0 && op?.type !== "SEND") return false;
+      if (!isKoreSendToken(op?.token)) return false;
+      const toText = accountKey(op?.to);
+      if (!toText || (toText !== destText && toText !== intent.from)) return false;
+      if (op.external !== intent.key) return false;
+      if (typeof op.amount !== "bigint") return false;
+      sum += op.amount;
     }
     return sum === owed;
   }
 
   function pendingHashes(pending) {
     const hashes = [];
-    for (const block of Array.isArray(pending?.blocks) ? pending.blocks : []) {
-      const hash = block?.hash ?? block?.blocksHash;
-      if (typeof hash === "string" && hash) hashes.push(hash);
+    for (const block of pendingBlocksOf(pending)) {
+      const hash = hashText(block?.hash ?? block?.blocksHash);
+      if (hash) hashes.push(hash);
     }
-    if (hashes.length === 0 && typeof pending?.hash === "string" && pending.hash) hashes.push(pending.hash);
+    if (hashes.length === 0) {
+      const hash = hashText(pending?.hash);
+      if (hash) hashes.push(hash);
+    }
     if (hashes.length === 0) hashes.push(`pending:${String(pending?.date ?? "none")}`);
     return hashes;
   }
@@ -587,9 +600,39 @@ export async function runShaft({
   function payoutVoteCap() {
     rollPayoutFeeDay();
     const room = payoutFeeBudget() - state.payoutFeeSpent;
-    const cappedRoom = room > 0n ? room : 0n;
+    if (room <= 0n) return 0n;
     const cap = payoutFeeCap();
-    return cappedRoom < cap ? cappedRoom : cap;
+    return room < cap ? room : cap;
+  }
+
+  function samePendingBlock(block, pending) {
+    if (!block || !pending) return false;
+    if (block === pending) return true;
+    const hash = hashText(block?.hash ?? block?.blocksHash);
+    if (hash && hash === hashText(pending?.hash)) return true;
+    for (const item of pendingBlocksOf(pending)) {
+      if (item === block) return true;
+      if (hash && hash === hashText(item?.hash ?? item?.blocksHash)) return true;
+    }
+    return false;
+  }
+
+  function extraKtaFee(staple, pending) {
+    const blocks = Array.isArray(staple?.blocks) ? staple.blocks : [];
+    const extras = blocks.filter((block) => !samePendingBlock(block, pending));
+    if (extras.length === 0) return null;
+    let sum = 0n;
+    for (const block of extras) {
+      for (const op of Array.isArray(block?.operations) ? block.operations : []) {
+        if (op?.type !== 0 && op?.type !== "SEND") continue;
+        if (!tokenIsKta(op?.token, base, baseText)) continue;
+        try {
+          if (op.amount === undefined || op.amount === null) continue;
+          sum += BigInt(op.amount);
+        } catch { /* not a fee amount */ }
+      }
+    }
+    return sum;
   }
 
   async function finishSignedBlock() {
@@ -602,16 +645,26 @@ export async function runShaft({
       return "expired";
     }
     const payout = isPendingPayout(pending);
+    // Payouts can stall for up to about 6 minutes while a pending pick block expires.
     if (picksOff() && !payout) {
       noteLeftPick(pending);
       return "wait";
     }
     console.log("Finishing the block already signed.");
     try {
-      const blocks = Array.isArray(pending.blocks) ? pending.blocks : [];
+      const blocks = pendingBlocksOf(pending);
       await pauseForRate();
       let quotes;
-      if (blocks.length > 0 && typeof client.getQuotes === "function") quotes = await client.getQuotes(blocks);
+      let quoteKnown = false;
+      if (blocks.length > 0 && typeof client.getQuotes === "function") {
+        try {
+          quotes = await client.getQuotes(blocks);
+          quoteKnown = true;
+        } catch {
+          quotes = undefined;
+          quoteKnown = false;
+        }
+      }
       const quoted = quotesFee(quotes);
       const cap = payout ? payoutVoteCap() : bundleCap();
       if (payout) {
@@ -640,10 +693,17 @@ export async function runShaft({
       }
       const { generateFeeBlock, taken } = cappedFeeBlock(cap);
       const recovered = await client.recover(true, { generateFeeBlock, quotes });
+      if (recovered == null) return false;
       clearEpisode();
       let charged = 0n;
       if (payout) {
-        charged = taken.used && taken.fee > 0n ? taken.fee : quoted.amount;
+        if (taken.used) charged = taken.fee;
+        else {
+          const extra = extraKtaFee(recovered, pending);
+          if (extra !== null) charged = extra;
+          else if (quoteKnown) charged = quoted.amount;
+          else charged = cap;
+        }
         rollPayoutFeeDay();
         state.payoutFeeSpent += charged;
         payoutBlockNoted = "";
@@ -653,7 +713,8 @@ export async function runShaft({
       const left = await client.balance(base);
       const remaining = state.windowStart + DAY_MS - now();
       const planNow = pace({ balance: left, remainingMs: remaining, reserve: RESERVE, feePerTx: state.feePerTx ?? FEE_PER_TX });
-      sayPublished(recovered?.publish === true || Boolean(recovered?.voteStaple), planNow.tpsMilli, taken.used ? taken.fee : 0n, state.spent, left, 0);
+      const publishedFee = taken.used ? taken.fee : 0n;
+      sayPublished(true, planNow.tpsMilli, publishedFee, state.spent, left, 0);
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown";
       if (message.includes("enough voting power") || message.includes("INSUFFICIENT_VOTING_WEIGHT")) {
@@ -678,12 +739,11 @@ export async function runShaft({
       holdPayouts("Balance does not match this payout.");
       return;
     }
-    if (!state.done.includes(intent.from)) state.done.push(intent.from);
     try { unlinkSync(`${dir}/PAYHOLD`); } catch { /* none */ }
     clearFloor(BigInt(intent.floor));
     clearIntent();
     writeState(state);
-    console.log("KORE send did not land. Nothing was marked paid.");
+    console.log("KORE send did not land. Nothing was marked paid. Payout stays queued.");
   }
 
   try {

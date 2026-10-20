@@ -38,7 +38,7 @@ check("a fee above the reserve is allowed", feeFits(2_001n, 1n, 2_000n) === true
 check("the floor is the balance minus the payout", floorAfter(21_000_000n, row.amount) === 21_000_000n - row.amount);
 check("a payout bigger than the wallet is refused", floorAfter(10n, 11n) === null);
 
-const intent = { from: "keeta_bob", amount: row.amount.toString(), floor: (21_000_000n - row.amount).toString() };
+const intent = { from: "keeta_bob", amount: row.amount.toString(), key: row.key, floor: (21_000_000n - row.amount).toString() };
 check("a landed send is paid", judgeIntent(21_000_000n - row.amount, intent) === "paid");
 check("a missed send is not paid", judgeIntent(21_000_000n, intent) === "missed");
 check("any other drop holds", judgeIntent(20_000_000n, intent) === "hold");

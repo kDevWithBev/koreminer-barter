@@ -51,8 +51,12 @@ function setEnv(env) {
   write("PAYOUT_FEE_BUDGET_KTA_PER_DAY", env.budget);
 }
 
-function koreSend(amount, to = { id: "dest" }) {
-  return { type: 0, to, amount, token: { id: "kore" } };
+function blockOf(hash, operations, date = new Date(start)) {
+  return { hash: { toString() { return hash; } }, date, operations };
+}
+
+function koreSend(amount, extra = {}) {
+  return { type: 0, to: { id: "dest" }, amount, token: { id: "kore" }, external: "kore-alice", ...extra };
 }
 
 try {
@@ -67,13 +71,7 @@ try {
     client: makeClient(pickBooks, {
       pickQuote: fromKta("0.006"),
       voteFee: fromKta("0.006"),
-      pending: {
-        date: new Date(start),
-        blocks: [{
-          hash: "pick-1",
-          operations: [{ type: 0, to: { id: "dust" }, amount: 1n, token: { id: "base" } }],
-        }],
-      },
+      pending: blockOf("pick-1", [{ type: 0, to: { id: "dust" }, amount: 1n, token: { id: "base" }, external: "pick" }]),
     }),
     steps: 2,
     clock: start,
@@ -91,10 +89,7 @@ try {
       pickQuote: fromKta("0.006"),
       payoutQuote: fromKta("0.02"),
       voteFee: fromKta("0.02"),
-      pending: {
-        date: new Date(start),
-        blocks: [{ hash: "pay-1", operations: [koreSend(due)] }],
-      },
+      pending: blockOf("pay-1", [koreSend(due)]),
     }),
     steps: 0,
     clock: start,
@@ -112,13 +107,7 @@ try {
     client: makeClient(mixedBooks, {
       pickQuote: fromKta("0.006"),
       payoutQuote: fromKta("0.00404"),
-      pending: {
-        date: new Date(start),
-        blocks: [{
-          hash: "mix-1",
-          operations: [koreSend(due), { type: 0, to: { id: "dust" }, amount: 1n, token: { id: "base" } }],
-        }],
-      },
+      pending: blockOf("mix-1", [koreSend(due), { type: 0, to: { id: "dust" }, amount: 1n, token: { id: "base" }, external: "pick" }]),
     }),
     steps: 1,
     clock: start,
@@ -132,10 +121,7 @@ try {
     books: unknownBooks,
     client: makeClient(unknownBooks, {
       pickQuote: fromKta("0.006"),
-      pending: {
-        date: new Date(start),
-        blocks: [{ hash: "odd-1", operations: [{ type: 9, to: { id: "dest" }, amount: due, token: { id: "kore" } }] }],
-      },
+      pending: blockOf("odd-1", [{ type: 9, to: { id: "dest" }, amount: due, token: { id: "kore" }, external: "kore-alice" }]),
     }),
     steps: 1,
     clock: start,
@@ -211,10 +197,7 @@ try {
       payoutQuote: fromKta("0.02"),
       pickQuote: fromKta("0.006"),
       voteFee: fromKta("0.02"),
-      pending: {
-        date: new Date(start),
-        blocks: [{ hash: "pay-budget", operations: [koreSend(due)] }],
-      },
+      pending: blockOf("pay-budget", [koreSend(due)]),
     }),
     steps: 0,
     clock: start,
