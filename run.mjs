@@ -253,12 +253,12 @@ export async function runShaft({
     }
     try {
       const blocks = Array.isArray(pending.blocks) ? pending.blocks : [];
+      await pauseForRate();
       let quotes;
       if (blocks.length > 0 && typeof client.getQuotes === "function") quotes = await client.getQuotes(blocks);
       const quoted = quotesFee(quotes);
       const cap = bundleCap();
       if (quoted > cap) throw new FeeOverCap(quoted, cap);
-      await pauseForRate();
       await client.recover(true, { generateFeeBlock: cappedFeeBlock(), quotes });
       clearEpisode();
       notePublish();
@@ -396,6 +396,7 @@ function settlePayout(koreBal) {
     const builder = client.initBuilder();
     builder.send(dest, row.amount, koreAccount, row.key);
     const built = await builder.computeBlocks();
+    await pauseForRate();
     const quotes = await client.getQuotes(built.blocks);
     const fee = quotesFee(quotes);
     const spendable = wallet > RESERVE ? wallet - RESERVE : 0n;
@@ -421,7 +422,6 @@ function settlePayout(koreBal) {
     writeJson(intentPath, intent);
     writeFileSync(floorPath, `${floor.toString()}\n`, { mode: 0o600 });
     try {
-      await pauseForRate();
       await publishCapped(builder, quotes);
       clearEpisode();
       notePublish();
@@ -555,6 +555,7 @@ function settlePayout(koreBal) {
         await sleep(30000);
         continue;
       }
+      await pauseForRate();
       const quotes = await client.getQuotes(built.blocks);
       const total = quotesFee(quotes);
       const judged = judgeQuote({
@@ -574,7 +575,6 @@ function settlePayout(koreBal) {
       state.feePerTx = judged.learn;
 
       const before = await client.balance(base);
-      await pauseForRate();
       const result = await publishCapped(builder, quotes);
       clearEpisode();
       const after = await client.balance(base);
