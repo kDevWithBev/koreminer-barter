@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, fchmodSync, fchownSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accounted, booksFromJson } from "./books.mjs";
@@ -208,12 +208,12 @@ async function run(opts = {}) {
       return live.history;
     };
   }
-  const fs = opts.trackReads ? {
+  const fs = opts.fs ?? (opts.trackReads ? {
     readFileSync: (path, ...args) => {
       opened.push(String(path));
       return readFileSync(path, ...args);
     },
-  } : undefined;
+  } : undefined);
   const baseDeps = {
     dir,
     now: opts.now ?? NOW,
@@ -1296,6 +1296,127 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   const short = await run({ argv: [], booksText: text });
   check("H6 setup covers the quote but not the fee cap", next === target && next < capLine && short.live.balance === next);
   check("H6 the worst-case fee is refused", short.code === 2 && short.counts.publish === 0 && has(short.lines, "balance is short of the refund"));
+}
+
+function trackIo(order) {
+  return {
+    openSync(path, flags, mode) {
+      const fd = openSync(path, flags, mode);
+      order.push({ op: "open", path: String(path), fd, mode });
+      return fd;
+    },
+    writeFileSync(target, body, ...rest) {
+      order.push({
+        op: "write",
+        target: typeof target === "number" ? target : String(target),
+        body: typeof body === "string" ? body : "",
+      });
+      return writeFileSync(target, body, ...rest);
+    },
+    fchownSync(fd, uid, gid) {
+      order.push({ op: "fchown", fd, uid, gid });
+      return fchownSync(fd, uid, gid);
+    },
+    fchmodSync(fd, mode) {
+      order.push({ op: "fchmod", fd, mode });
+      return fchmodSync(fd, mode);
+    },
+    fsyncSync(fd) {
+      order.push({ op: "fsync", fd });
+      return fsyncSync(fd);
+    },
+    closeSync(fd) {
+      order.push({ op: "close", fd });
+      return closeSync(fd);
+    },
+    renameSync(from, to) {
+      order.push({ op: "rename", from: String(from), to: String(to) });
+      return renameSync(from, to);
+    },
+    chmodSync(path, mode) {
+      order.push({ op: "chmod", path: String(path), mode });
+      return chmodSync(path, mode);
+    },
+  };
+}
+
+function eventsAfterOpen(order, index) {
+  const fd = order[index].fd;
+  const events = [];
+  for (let i = index; i < order.length; i += 1) {
+    const event = order[i];
+    if (i !== index && event.op === "open" && event.fd === fd) break;
+    if (event.fd === fd || (event.op === "write" && event.target === fd)) events.push(event);
+    if (event.op === "close" && event.fd === fd) break;
+  }
+  return events;
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const order = [];
+  const landed = await run({
+    argv: sendArgv(info),
+    fs: trackIo(order),
+    onPublish: (_b, _o, ctx) => {
+      chmodSync(join(ctx.dir, "books.json"), 0o640);
+      ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+      ctx.live.balance -= rawTotal + FEE;
+      return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+    },
+  });
+  const tmpOpens = [];
+  order.forEach((event, index) => {
+    if (event.op === "open" && event.path.endsWith(".tmp")) tmpOpens.push(index);
+  });
+  let ownedBeforeSync = tmpOpens.length > 0;
+  for (const index of tmpOpens) {
+    const ops = eventsAfterOpen(order, index).map((event) => event.op);
+    const syncAt = ops.indexOf("fsync");
+    const chownAt = ops.indexOf("fchown");
+    const chmodAt = ops.indexOf("fchmod");
+    if (chownAt < 0 || chmodAt < 0 || syncAt < 0 || chownAt > syncAt || chmodAt > syncAt) ownedBeforeSync = false;
+  }
+  const booksIndex = order.findIndex((event) => event.op === "open" && event.path.endsWith("/books.json.tmp"));
+  const booksEvents = booksIndex < 0 ? [] : eventsAfterOpen(order, booksIndex);
+  const booksMode = booksEvents.find((event) => event.op === "fchmod");
+  const doneIndex = order.findIndex((event) => event.op === "open" && event.path.endsWith("/done.json.tmp"));
+  const doneEvents = doneIndex < 0 ? [] : eventsAfterOpen(order, doneIndex);
+  const doneOpens = order.filter((event) => event.op === "open" && event.path.endsWith("/done.json.tmp"));
+  const booksRename = order.findIndex((event) => event.op === "rename" && event.to.endsWith("/books.json"));
+  const doneWrite = doneEvents.find((event) => event.op === "write");
+  const finalMode = statSync(join(landed.dir, "books.json")).mode & 0o777;
+  const chmodBooks = order.some((event) => event.op === "chmod" && event.path.endsWith("/books.json") && (event.mode & 0o777) === 0o600);
+  check("H7i fd chown and chmod precede the tmp fsync", landed.code === 0 && ownedBeforeSync);
+  check("H7i books.json keeps mode 0640", booksMode?.mode === 0o640 && finalMode === 0o640 && !chmodBooks);
+  check("H7ii done.json is written once with the final books value", doneOpens.length === 1 && doneIndex > booksRename && doneWrite?.body.includes('"books": "adjusted"'));
+
+  const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  const shift = BigInt(raw.operator) + RAW;
+  raw.operator = (-RAW).toString();
+  raw.parked = (BigInt(raw.parked ?? "0") + shift).toString();
+  const text = JSON.stringify(raw);
+  const mismatchOrder = [];
+  const mismatch = await run({
+    argv: sendArgv(info),
+    booksText: text,
+    fs: trackIo(mismatchOrder),
+    onPublish: (_b, _o, ctx) => {
+      chmodSync(join(ctx.dir, "books.json"), 0o640);
+      ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+      ctx.live.balance -= rawTotal + FEE;
+      return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+    },
+  });
+  const mismatchIndexes = [];
+  mismatchOrder.forEach((event, index) => {
+    if (event.op === "open" && event.path.endsWith("/done.json.tmp")) mismatchIndexes.push(index);
+  });
+  const mismatchEvents = mismatchIndexes.length === 1 ? eventsAfterOpen(mismatchOrder, mismatchIndexes[0]) : [];
+  const mismatchWrite = mismatchEvents.find((event) => event.op === "write");
+  const mismatchBooks = mismatchOrder.some((event) => event.op === "open" && event.path.endsWith("/books.json.tmp"));
+  check("H7ii a mismatch writes done.json once and does not rewrite books.json", mismatch.code === 3 && mismatchIndexes.length === 1 && mismatchWrite?.body.includes('"books": "mismatch"') && !mismatchBooks && (statSync(mismatch.booksPath).mode & 0o777) === 0o640 && readFileSync(mismatch.booksPath, "utf8") === text);
 }
 
 {

@@ -13,6 +13,8 @@ import {
   closeSync,
   copyFileSync,
   existsSync,
+  fchmodSync,
+  fchownSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -21,6 +23,7 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -143,6 +146,9 @@ function bindIo(hook = {}) {
     openSync: hook.openSync ?? openSync,
     closeSync: hook.closeSync ?? closeSync,
     fsyncSync: hook.fsyncSync ?? fsyncSync,
+    fchownSync: hook.fchownSync ?? fchownSync,
+    fchmodSync: hook.fchmodSync ?? fchmodSync,
+    statSync: hook.statSync ?? statSync,
     mkdirSync: hook.mkdirSync ?? mkdirSync,
     chmodSync: hook.chmodSync ?? chmodSync,
     renameSync: hook.renameSync ?? renameSync,
@@ -157,16 +163,26 @@ function fsyncDir(io, dir) {
   try { io.fsyncSync(fd); } finally { io.closeSync(fd); }
 }
 
-function atomicWrite(io, path, body) {
+function fileOwner(io, path) {
+  try {
+    const st = io.statSync(path);
+    return { uid: st.uid, gid: st.gid };
+  } catch {
+    return { uid: process.getuid(), gid: process.getgid() };
+  }
+}
+
+function atomicWrite(io, path, body, mode = 0o600) {
   const tmp = `${path}.tmp`;
-  const fd = io.openSync(tmp, "w", 0o600);
+  const owner = fileOwner(io, path);
+  const fd = io.openSync(tmp, "w", mode);
   try {
     io.writeFileSync(fd, body);
-    io.fsyncSync(fd);
+    io.fchownSync(fd, owner.uid, owner.gid); // GUARD:H7-owner
+    io.fchmodSync(fd, mode); // GUARD:H7-mode
+    io.fsyncSync(fd); // GUARD:H7-fsync
   } finally { io.closeSync(fd); }
-  io.chmodSync(tmp, 0o600);
   io.renameSync(tmp, path);
-  io.chmodSync(path, 0o600);
   fsyncDir(io, dirname(path));
 }
 
@@ -634,12 +650,29 @@ function booksAssertions(books, chainBalanceNow, recipients, reserveBefore) {
   return "";
 }
 
+function sealDone(ctx, refundDir, booksField) {
+  const done = {
+    block: ctx.intent.block,
+    total: ctx.intent.total,
+    plan: ctx.intent.plan,
+    books: booksField, // GUARD:H2-books
+  };
+  atomicWrite(ctx.io, `${refundDir}/done.json`, `${JSON.stringify(done, null, 2)}\n`);
+}
+
+function confirmBooks(io, path, prior) {
+  const after = io.statSync(path);
+  return after.uid === prior.uid && after.gid === prior.gid && (after.mode & 0o777) === (prior.mode & 0o777);
+}
+
 function finishBooks(ctx, verdict) {
   ctx.say(`REFUND_LANDED ${ctx.intent.block}`); // GUARD:H2-landed
   const when = stamp(ctx.now());
   const refundDir = ensureRefundDir(ctx.io, ctx.dir);
+  const booksPath = `${ctx.dir}/books.json`;
   const books = loadBooks(ctx.io, ctx.dir);
   const reserveBefore = Object.prototype.hasOwnProperty.call(ctx, "reserveBefore") ? ctx.reserveBefore : books.share.reserve;
+  const prior = ctx.io.statSync(booksPath);
   applyBooks(books, ctx.intent.recipients, BigInt(ctx.intent.addbacks), verdict.fee); // GUARD:books-adjust
   const problem = booksAssertions(books, verdict.balance, ctx.intent.recipients, reserveBefore); // GUARD:R5
   const receipt = {
@@ -655,24 +688,25 @@ function finishBooks(ctx, verdict) {
     balanceAfter: verdict.balance.toString(),
     plan: ctx.intent.plan,
   };
-  const done = {
-    block: ctx.intent.block,
-    total: ctx.intent.total,
-    plan: ctx.intent.plan,
-    books: problem ? "mismatch" : "adjusted", // GUARD:H2-books
-  };
   atomicWrite(ctx.io, `${refundDir}/receipt-${when}.json`, `${JSON.stringify(receipt, null, 2)}\n`);
-  atomicWrite(ctx.io, `${refundDir}/done.json`, `${JSON.stringify(done, null, 2)}\n`);
   if (problem) {
+    sealDone(ctx, refundDir, "mismatch");
     ctx.say("BOOKS_MISMATCH");
     return 3;
   }
   const backup = `${ctx.dir}/books.json.pre-refund-${when}`;
-  ctx.io.copyFileSync(`${ctx.dir}/books.json`, backup);
+  ctx.io.copyFileSync(booksPath, backup);
   ctx.io.chmodSync(backup, 0o600);
   const fd = ctx.io.openSync(backup, "r+");
   try { ctx.io.fsyncSync(fd); } finally { ctx.io.closeSync(fd); }
-  atomicWrite(ctx.io, `${ctx.dir}/books.json`, `${JSON.stringify(booksToJson(books), null, 2)}\n`);
+  const booksMode = prior.mode & 0o777;
+  atomicWrite(ctx.io, booksPath, `${JSON.stringify(booksToJson(books), null, 2)}\n`, booksMode); // GUARD:H7-books
+  if (!confirmBooks(ctx.io, booksPath, prior)) {
+    sealDone(ctx, refundDir, "mismatch");
+    ctx.say("BOOKS_MISMATCH");
+    return 3;
+  }
+  sealDone(ctx, refundDir, "adjusted"); // GUARD:H7-done
   ctx.say("BOOKS_OK");
   return 0;
 }
