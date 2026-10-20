@@ -54,6 +54,7 @@ export async function runShaft({
   const linksPath = `${dir}/links.json`;
 
   let overCapStep = null;
+  let paidFee = 0n;
 
   function armEpisode(err) {
     const first = overCapStep === null;
@@ -95,6 +96,7 @@ export async function runShaft({
       const fee = voteFeeTotal(staple);
       const cap = bundleCap();
       if (fee > cap) throw new FeeOverCap(fee, cap);
+      paidFee = fee;
       const builder = client.initBuilder();
       return builder.computeFeeBlock(staple);
     };
@@ -583,6 +585,9 @@ function settlePayout(koreBal) {
         result.publish === true || Boolean(result.voteStaple),
         "pace",
         (Number(plan.tpsMilli) / 1000).toFixed(2),
+        "fee",
+        kta(paidFee),
+        "KTA",
         "spent",
         kta(state.spent),
         "KTA",
