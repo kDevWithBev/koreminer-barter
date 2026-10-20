@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, judgeQuote, kta, pace, voteFeeTotal } from "./pace.mjs";
+import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, judgeQuote, kta, minPublishGapMs, pace, voteFeeTotal } from "./pace.mjs";
 import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
@@ -72,6 +72,24 @@ export async function runShaft({
     overCapStep = null;
   }
 
+  function rateWait() {
+    const last = Number(state.lastPublishMs) || 0;
+    if (!last) return 0;
+    const gap = minPublishGapMs();
+    const elapsed = now() - last;
+    return elapsed >= gap ? 0 : gap - elapsed;
+  }
+
+  async function pauseForRate() {
+    const wait = rateWait();
+    if (wait > 0) await sleep(wait);
+  }
+
+  function notePublish() {
+    state.lastPublishMs = now();
+    writeState(state);
+  }
+
   function cappedFeeBlock() {
     return async (staple) => {
       const fee = voteFeeTotal(staple);
@@ -106,9 +124,10 @@ export async function runShaft({
         payoutDay: typeof saved.payoutDay === "string" ? saved.payoutDay : "",
         done: Array.isArray(saved.done) ? saved.done.filter((item) => typeof item === "string") : [],
         closeOpen: saved.closeOpen === true,
+        lastPublishMs: Number(saved.lastPublishMs) || 0,
       };
     } catch {
-      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false };
+      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0 };
     }
   }
 
@@ -194,6 +213,7 @@ export async function runShaft({
       payoutDay: state.payoutDay ?? "",
       done: state.done ?? [],
       closeOpen: state.closeOpen === true,
+      lastPublishMs: state.lastPublishMs || 0,
     });
     writeFileSync(`${statePath}.tmp`, body);
     renameSync(`${statePath}.tmp`, statePath);
@@ -236,8 +256,10 @@ export async function runShaft({
       const quoted = quotesFee(quotes);
       const cap = bundleCap();
       if (quoted > cap) throw new FeeOverCap(quoted, cap);
+      await pauseForRate();
       await client.recover(true, { generateFeeBlock: cappedFeeBlock(), quotes });
       clearEpisode();
+      notePublish();
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown";
       if (message.includes("enough voting power") || message.includes("INSUFFICIENT_VOTING_WEIGHT")) {
@@ -393,8 +415,10 @@ function settlePayout(koreBal) {
     writeJson(intentPath, intent);
     writeFileSync(floorPath, `${floor.toString()}\n`, { mode: 0o600 });
     try {
+      await pauseForRate();
       await publishCapped(builder, quotes);
       clearEpisode();
+      notePublish();
     } catch (err) {
       if (isOverCap(err)) {
         if (!(await client.pendingBlock())) {
@@ -425,6 +449,7 @@ function settlePayout(koreBal) {
           payoutDay: state.payoutDay ?? "",
           done: state.done ?? [],
           closeOpen: state.closeOpen === true,
+          lastPublishMs: state.lastPublishMs || 0,
         };
         writeState(state);
         console.log("New day. Pace window reset.");
@@ -457,6 +482,7 @@ function settlePayout(koreBal) {
       const gate = await finishSignedBlock();
       if (gate === "expired") await settleExpiredIntent();
       if (gate === true || gate === "wait") {
+        if (gate === true) await pauseForRate();
         if (gate === "wait") await sleep(10000);
         continue;
       }
@@ -498,6 +524,7 @@ function settlePayout(koreBal) {
       const again = await finishSignedBlock();
       if (again === "expired") await settleExpiredIntent();
       if (again === true || again === "wait") {
+        if (again === true) await pauseForRate();
         if (again === "wait") await sleep(10000);
         continue;
       }
@@ -540,11 +567,13 @@ function settlePayout(koreBal) {
       state.feePerTx = judged.learn;
 
       const before = await client.balance(base);
+      await pauseForRate();
       const result = await publishCapped(builder, quotes);
       clearEpisode();
       const after = await client.balance(base);
       const drop = before > after ? before - after : total;
       state.spent += drop;
+      state.lastPublishMs = now();
       writeState(state);
       notePublished(books, drop, now());
       saveBooks(books);
@@ -577,7 +606,9 @@ function settlePayout(koreBal) {
           holdPayouts("KORE moved without a matching payout.");
         }
       }
-      if (elapsed < plan.intervalMs) await sleep(plan.intervalMs - elapsed);
+      const paceWait = elapsed < plan.intervalMs ? plan.intervalMs - elapsed : 0;
+      const wait = Math.max(paceWait, rateWait());
+      if (wait > 0) await sleep(wait);
     } catch (err) {
       if (isOverCap(err)) {
         const delay = armEpisode(err);

@@ -40,6 +40,16 @@ export function choosePack({ spendable, feePerTx = FEE_PER_TX, maxPack = BLOCK_T
   return Number(affordable);
 }
 
+export function maxBlocksPerHour() {
+  const raw = Number(process.env.MAX_BLOCKS_PER_HOUR ?? "60");
+  if (!Number.isFinite(raw) || raw < 1) return 60;
+  return Math.floor(raw);
+}
+
+export function minPublishGapMs(limit = maxBlocksPerHour()) {
+  return Math.ceil(3_600_000 / limit);
+}
+
 export function bundleCap() {
   const text = process.env.FEE_CAP_PER_BUNDLE_KTA;
   const raw = text === undefined || text === "" ? "0.05" : text;
