@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, copyFileSync, existsSync, fchmodSync, fchownSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants, copyFileSync, existsSync, fchmodSync, fchownSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { accounted, booksFromJson } from "./books.mjs";
 import { RESERVE } from "./share.mjs";
 import { main, DRAIN_SHA256, MEMO, INTAKE, REFUND_FEE_CAP } from "./refund.mjs";
@@ -19,6 +19,164 @@ const BRIDGE = "keeta_aqltdal4rshtky5iehd765y3mdjkcmku5d4ulo5fgonzqrxulwepnogq33
 const EXCLUDED = new Set([TREY_A, TREY_B, BRIDGE, INTAKE, SINK]);
 const NOW = () => Date.parse("2026-10-20T12:00:00.000Z");
 const FEE = 4n * 10n ** 15n;
+const tmpBefore = new Set(readdirSync(tmpdir()));
+const SUITE = mkdtempSync(join(tmpdir(), "kore-refund-suite-"));
+const plantSlot = { current: null };
+const stopViolations = [];
+let mainCalls = 0;
+let stopCreated = 0;
+let suiteGone = false;
+
+function suiteParentIsSafe(path) {
+  return dirname(path) === tmpdir() && basename(path).startsWith("kore-refund-suite-");
+}
+
+function removeSuite() {
+  if (suiteGone || !existsSync(SUITE) || !suiteParentIsSafe(SUITE)) return;
+  rmSync(SUITE, { recursive: true, force: true });
+  suiteGone = true;
+}
+
+process.on("exit", () => {
+  console.log(`F-A checked ${mainCalls} main() calls, ${stopCreated} created STOP, ${stopViolations.length} violations`);
+  for (const row of stopViolations) console.log(`F-A violation ${row.label} ${row.detail}`);
+  try { removeSuite(); } catch { /* the failure is already reported */ }
+});
+
+function plantStop(dir, body) {
+  const path = join(dir, "STOP");
+  writeFileSync(path, body);
+  const st = statSync(path);
+  plantSlot.current = { bytes: readFileSync(path), mtimeMs: st.mtimeMs, mode: st.mode, ino: st.ino };
+}
+
+function callerOfGo() {
+  const lines = (new Error().stack ?? "").split("\n");
+  const hit = lines.find((line) => line.includes("refund-check.mjs") && !/\bat (async )?(go|run|callerOfGo)\b/.test(line));
+  return (hit ?? "unknown call").trim();
+}
+
+function stopAllowlist(source) {
+  const reasons = [];
+  const lines = source.split("\n");
+  const allowedStop = [
+    'for (const name of ["STOP", "HALT", "PAYHOLD", "FEEHOLD"]) {',
+    'stopFd = io.openSync(`${dir}/STOP`, "wx", 0o600); // GUARD:R4-exclusive',
+    'return refuse("STOP already exists");',
+    'io.chmodSync(`${dir}/STOP`, 0o600);',
+  ];
+  const stopLines = lines.map((line) => line.trim()).filter((line) => line.includes("STOP"));
+  if (stopLines.length !== allowedStop.length || stopLines.some((line, index) => line !== allowedStop[index])) {
+    reasons.push(`STOP lines ${JSON.stringify(stopLines)}`);
+  }
+  const allowedFd = [
+    "let stopFd;",
+    'stopFd = io.openSync(`${dir}/STOP`, "wx", 0o600); // GUARD:R4-exclusive',
+    'io.writeFileSync(stopFd, "refund in progress\\n");',
+    "io.fsyncSync(stopFd);",
+    "} finally { io.closeSync(stopFd); }",
+  ];
+  const fdLines = lines.map((line) => line.trim()).filter((line) => line.includes("stopFd"));
+  if (fdLines.length !== allowedFd.length || fdLines.some((line, index) => line !== allowedFd[index])) {
+    reasons.push(`stopFd lines ${JSON.stringify(fdLines)}`);
+  }
+  if (source.includes("clearStop")) reasons.push("clearStop is present");
+  if (/\brmSync\b/.test(source) || /\brmdirSync\b/.test(source)) reasons.push("rmSync or rmdirSync is present");
+  const stripped = source
+    .replace(/import \{\n[\s\S]*?\} from "node:fs";\n/, "")
+    .replace(/function bindIo\(hook = \{\}\) \{[\s\S]*?\n\}/, "");
+  if (/(?<!io\.)\bunlinkSync\b/.test(stripped) || /(?<!io\.)\brenameSync\b/.test(stripped)) {
+    reasons.push("bare unlinkSync or renameSync outside import and bindIo");
+  }
+  const count = (text, needle) => text.split(needle).length - 1;
+  if (count(source, "io.unlinkSync(") !== 1) reasons.push("io.unlinkSync( count");
+  if (count(source, "io.renameSync(") !== 2) reasons.push("io.renameSync( count");
+  if (count(source, "bestEffortUnlink(") !== 2) reasons.push("bestEffortUnlink( count");
+  if (/\bunlink\s*\(/.test(source) || /\brename\s*\(/.test(source) || /\brm\s*\(/.test(source) || /\brmdir\s*\(/.test(source)) {
+    reasons.push("async unlink rename rm or rmdir");
+  }
+  if (source.includes("node:fs/promises") || source.includes("fs/promises") || source.includes(".promises")) reasons.push("promises");
+  const spawns = lines.filter((line) => line.includes("spawnSync("));
+  if (spawns.length !== 1 || !spawns[0].includes("systemctl")) reasons.push("spawnSync");
+  if (/\bexecSync\s*\(/.test(source) || /\bexecFile(Sync)?\s*\(/.test(source) || /\bfork\s*\(/.test(source) || /\bexec\s*\(/.test(source) || /\bspawn\s*\(/.test(source)) {
+    reasons.push("exec fork or spawn");
+  }
+  if (source.includes("io[")) reasons.push("computed io access");
+  if (/\brequire\s*\(/.test(source) || source.includes("createRequire")) reasons.push("require");
+  if (/\btruncateSync\b/.test(source) || /\bftruncateSync\b/.test(source) || /\btruncate\s*\(/.test(source) || /\butimesSync\b/.test(source) || /\bfutimesSync\b/.test(source) || /\blutimesSync\b/.test(source) || /\butimes\s*\(/.test(source)) {
+    reasons.push("truncate or utimes");
+  }
+  const dynamics = [...source.matchAll(/\bimport\s*\([^)\n]*\)/g)].map((match) => match[0]);
+  if (dynamics.length !== 3 || dynamics.some((item) => item !== 'import("@keetanetwork/keetanet-client")')) {
+    reasons.push(`dynamic import ${JSON.stringify(dynamics)}`);
+  }
+  if ([...source.matchAll(/\bimport\s*\(/g)].length !== (source.match(/await import\("@keetanetwork\/keetanet-client"\)/g) ?? []).length) {
+    reasons.push("dynamic import is not awaited");
+  }
+  return { ok: reasons.length === 0, reason: reasons.join("; ") };
+}
+
+const allow = stopAllowlist(readFileSync(new URL("./refund.mjs", import.meta.url), "utf8"));
+console.log(`F-A allowlist ${allow.ok ? "ok" : `FAIL ${allow.reason}`}`);
+
+function removeReceipts(dir) {
+  const refundDir = join(dir, "refund");
+  if (!existsSync(refundDir)) return;
+  for (const name of readdirSync(refundDir)) {
+    if (name.startsWith("receipt-")) rmSync(join(refundDir, name));
+  }
+}
+
+function countingFs(inner = {}) {
+  const counter = { n: 0 };
+  const real = { mkdirSync, chmodSync, fchmodSync, fchownSync, writeFileSync, appendFileSync, copyFileSync, renameSync, unlinkSync, openSync };
+  const fs = { ...inner };
+  for (const name of ["mkdirSync", "chmodSync", "fchmodSync", "fchownSync", "writeFileSync", "appendFileSync", "copyFileSync", "renameSync", "unlinkSync"]) {
+    const impl = inner[name] ?? real[name];
+    fs[name] = (...args) => {
+      counter.n += 1;
+      return impl(...args);
+    };
+  }
+  const openImpl = inner.openSync ?? openSync;
+  fs.openSync = (path, flags, mode) => {
+    if (flags !== "r") counter.n += 1;
+    return openImpl(path, flags, mode);
+  };
+  return { fs, counter };
+}
+
+const FE_STOP = "Stop. Do not adjust books. Send this output to Forge and KeeLend Ops.";
+
+function feStopped(result, counter, shot, dir, books, hash) {
+  const first = `REFUND_VERIFY: UNKNOWN_RECEIPT_NO_DONE ${hash}`;
+  return result.code === 4
+    && result.lines.length === 3
+    && result.lines[0].startsWith("REFUND verify ")
+    && result.lines[1] === first
+    && result.lines[2] === FE_STOP
+    && !has(result.lines, "BOOKS_MISMATCH")
+    && !has(result.lines, "BOOKS_OK")
+    && !has(result.lines, "REFUND_LANDED")
+    && !has(result.lines, "finished now")
+    && quiet(result.lines)
+    && !result.lines.join("\n").includes("SECRET")
+    && snapshot(dir) === shot
+    && counter.n === 0
+    && readFileSync(join(dir, "books.json")).equals(books);
+}
+
+async function twoVerifies(ran, hash, innerFactory) {
+  const books = readFileSync(ran.booksPath);
+  const seen = [];
+  for (let i = 0; i < 2; i += 1) {
+    const shot = snapshot(ran.dir);
+    const counted = countingFs(innerFactory ? innerFactory() : {});
+    const verified = await ran.again(["--verify"], { fs: counted.fs });
+    seen.push(feStopped(verified, counted.counter, shot, ran.dir, books, hash));
+  }
+  return seen.every(Boolean);
+}
 
 const EXPECT = {
   aabd7qpx: "10558.233467",
@@ -95,13 +253,16 @@ function defaultQuotes() {
 
 function snapshot(dir) {
   const rows = [];
+  function add(path, st) {
+    const kind = st.isDirectory() ? "dir" : "file";
+    const body = st.isDirectory() ? "" : createHash("sha256").update(readFileSync(path)).digest("hex");
+    rows.push(`${path}:${kind}:${st.mode}:${st.mtimeMs}:${body}`);
+  }
   function walk(path) {
-    for (const name of readdirSync(path).sort()) {
-      const full = join(path, name);
-      const st = statSync(full);
-      if (st.isDirectory()) walk(full);
-      else rows.push(`${full}:${createHash("sha256").update(readFileSync(full)).digest("hex")}`);
-    }
+    const st = statSync(path);
+    add(path, st);
+    if (!st.isDirectory()) return;
+    for (const name of readdirSync(path).sort()) walk(join(path, name));
   }
   walk(dir);
   return rows.join("\n");
@@ -117,7 +278,7 @@ function parseRows(lines) {
 }
 
 async function run(opts = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "kore-refund-"));
+  const dir = mkdtempSync(join(SUITE, "kore-refund-"));
   const booksPath = join(dir, "books.json");
   writeFileSync(booksPath, opts.booksText ?? readFileSync(FIXTURE));
   const books = booksFromJson(JSON.parse(readFileSync(booksPath, "utf8")));
@@ -242,14 +403,63 @@ async function run(opts = {}) {
   if (opts.plannerFault) baseDeps.plannerFault = opts.plannerFault;
   async function go(argv, extra = {}) {
     const lines = [];
+    mainCalls += 1;
+    const callLabel = callerOfGo();
+    const stopPath = join(dir, "STOP");
+    let before = null;
+    if (existsSync(stopPath)) {
+      const st = statSync(stopPath);
+      before = { bytes: readFileSync(stopPath), mtimeMs: st.mtimeMs, mode: st.mode, ino: st.ino };
+    }
+    plantSlot.current = null;
+    let created = false;
+    const testFs = Object.prototype.hasOwnProperty.call(extra, "fs") ? extra.fs : baseDeps.fs;
+    const inner = testFs && typeof testFs === "object" ? testFs : {};
+    const innerOpen = typeof inner.openSync === "function" ? inner.openSync.bind(inner) : openSync;
+    const wrapped = {
+      ...inner,
+      openSync(path, flags, mode) {
+        const exclusive = typeof flags === "string" ? flags.includes("x") : typeof flags === "number" && (flags & constants.O_EXCL) !== 0;
+        const fd = innerOpen(path, flags, mode);
+        if (exclusive && String(path) === stopPath) created = true;
+        return fd;
+      },
+    };
     const code = await main({
       ...baseDeps,
       ...extra,
       argv,
       output: (line) => lines.push(line),
+      fs: wrapped,
     });
+    if (created) stopCreated += 1;
+    const problems = [];
+    const planted = plantSlot.current;
+    function currentStop() {
+      const st = statSync(stopPath);
+      return { bytes: readFileSync(stopPath), mtimeMs: st.mtimeMs, mode: st.mode, ino: st.ino };
+    }
+    function sameStop(left, right) {
+      return left.bytes.equals(right.bytes) && left.mtimeMs === right.mtimeMs && left.mode === right.mode && left.ino === right.ino;
+    }
+    if (before) {
+      if (!existsSync(stopPath)) problems.push("STOP existed before and is missing");
+      else if (!sameStop(before, currentStop())) problems.push("STOP existed before and changed");
+    } else if (planted) {
+      if (!existsSync(stopPath)) problems.push("planted STOP is missing");
+      else if (!sameStop(planted, currentStop())) problems.push("planted STOP changed");
+    }
+    if (created) {
+      if (!existsSync(stopPath)) problems.push("created STOP is missing");
+      else {
+        const now = currentStop();
+        if (!now.bytes.equals(Buffer.from("refund in progress\n"))) problems.push("created STOP bytes differ");
+        if ((now.mode & 0o777) !== 0o600) problems.push("created STOP mode is not 0600");
+      }
+    }
+    if (problems.length) stopViolations.push({ label: callLabel, detail: problems.join("; ") });
     if (counts.send || counts.recover) throw new Error("client.send or client.recover was called");
-    return { code, lines, dir, counts, opened, live, client, booksPath, booksBefore: readFileSync(booksPath) };
+    return { code, lines, dir, counts, opened, live, client, booksPath, booksBefore: readFileSync(booksPath), stopKept: problems.length === 0 };
   }
   const first = await go(opts.argv ?? []);
   first.again = go;
@@ -758,6 +968,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   });
   const backup = readdirSync(landed.dir).find((name) => name.startsWith("books.json.pre-refund-"));
   rmSync(join(landed.dir, "refund", "done.json"));
+  removeReceipts(landed.dir);
   copyFileSync(join(landed.dir, backup), landed.booksPath);
   const seeds = landed.counts.seed;
   const quotes = landed.counts.quotes;
@@ -794,7 +1005,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   const info = await plan();
   const stopped = await run({
     argv: sendArgv(info),
-    onQuote: (dir) => writeFileSync(join(dir, "STOP"), "already\n"),
+    onQuote: (dir) => plantStop(dir, "already\n"),
   });
   check("T19 an exclusive STOP failure publishes nothing", stopped.code === 2 && stopped.counts.publish === 0 && has(stopped.lines, "STOP already exists"));
   let sys = 0;
@@ -852,6 +1063,7 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   const original = JSON.parse(readFileSync(join(landed.dir, backup), "utf8"));
   original.operator = (BigInt(original.operator) + 1n).toString();
   rmSync(join(landed.dir, "refund", "done.json"));
+  removeReceipts(landed.dir);
   rmSync(join(landed.dir, backup));
   const tampered = `${JSON.stringify(original)}\n`;
   writeFileSync(landed.booksPath, tampered);
@@ -879,13 +1091,13 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
 function writeDrain(mutator) {
   const body = JSON.parse(readFileSync(DRAIN, "utf8"));
   mutator(body);
-  const path = join(mkdtempSync(join(tmpdir(), "kore-drain-")), "refund-drain.json");
+  const path = join(mkdtempSync(join(SUITE, "kore-drain-")), "refund-drain.json");
   writeFileSync(path, JSON.stringify(body));
   return { path, sha: createHash("sha256").update(readFileSync(path)).digest("hex") };
 }
 {
   const spaced = readFileSync(DRAIN, "utf8") + " ";
-  const shaPath = join(mkdtempSync(join(tmpdir(), "kore-drain-")), "refund-drain.json");
+  const shaPath = join(mkdtempSync(join(SUITE, "kore-drain-")), "refund-drain.json");
   writeFileSync(shaPath, spaced);
   const shaBad = await run({ argv: ["--no-quote"], drainPath: shaPath });
   check("T21 a changed sha is refused", shaBad.code === 2 && has(shaBad.lines, "drain file hash does not match"));
@@ -956,10 +1168,10 @@ function rowsOf(result) {
     [["node", "./run.mjs"], "/opt/koreminer", true],
     [["node", "refund.mjs"], "/opt/koreminer", false],
   ];
-  const outsideRoot = mkdtempSync(join(tmpdir(), "kore-outside-"));
+  const outsideRoot = mkdtempSync(join(SUITE, "kore-outside-"));
   mkdirSync(outsideRoot, { recursive: true });
   writeFileSync(join(outsideRoot, "run.mjs"), "// outside\n");
-  const realRoot = mkdtempSync(join(tmpdir(), "kore-real-root-"));
+  const realRoot = mkdtempSync(join(SUITE, "kore-real-root-"));
   writeFileSync(join(realRoot, "run.mjs"), "// root\n");
   for (const [argv, cwd, refuse] of cases) {
     const result = await run({ argv: ["--no-quote"], processes: () => [{ argv, cwd }] });
@@ -1051,37 +1263,37 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
 }
 
 {
-  const missingRoot = join(tmpdir(), "kore-proc-missing-refund");
+  const missingRoot = join(SUITE, "proc-missing");
   const missing = await run({ argv: ["--no-quote"], useProc: true, procRoot: missingRoot });
   check("N3 an unreadable process list is refused", missing.code === 2 && missing.counts.quotes === 0 && has(missing.lines, "REFUND_REFUSED: process list unreadable"));
-  const zombieRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  const zombieRoot = mkdtempSync(join(SUITE, "kore-proc-"));
   mkdirSync(join(zombieRoot, "3"));
   writeFileSync(join(zombieRoot, "3", "cmdline"), "");
   writeFileSync(join(zombieRoot, "3", "cwd"), "not-a-link");
   const zombie = await run({ argv: ["--no-quote"], useProc: true, procRoot: zombieRoot });
   check("F1 a zombie with an empty cmdline is skipped", zombie.code === 0 && !has(zombie.lines, "process list unreadable"));
-  const goneRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  const goneRoot = mkdtempSync(join(SUITE, "kore-proc-"));
   mkdirSync(join(goneRoot, "4"));
   const gone = await run({ argv: ["--no-quote"], useProc: true, procRoot: goneRoot });
   check("F1 a pid that vanishes is skipped", gone.code === 0 && !has(gone.lines, "process list unreadable"));
-  const quietRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  const quietRoot = mkdtempSync(join(SUITE, "kore-proc-"));
   mkdirSync(join(quietRoot, "8"));
   writeFileSync(join(quietRoot, "8", "cmdline"), "bash\0");
   writeFileSync(join(quietRoot, "8", "cwd"), "not-a-link");
   const quiet = await run({ argv: ["--no-quote"], useProc: true, procRoot: quietRoot });
   check("F1 a non-node process with an unreadable cwd is not refused", quiet.code === 0 && !has(quiet.lines, "process list unreadable"));
-  const nodeRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  const nodeRoot = mkdtempSync(join(SUITE, "kore-proc-"));
   mkdirSync(join(nodeRoot, "7"));
   writeFileSync(join(nodeRoot, "7", "cmdline"), "node\0run.mjs\0");
   writeFileSync(join(nodeRoot, "7", "cwd"), "not-a-link");
   const nodeProc = await run({ argv: ["--no-quote"], useProc: true, procRoot: nodeRoot });
   check("F1 a run.mjs process with an unreadable cwd is refused", nodeProc.code === 2 && has(nodeProc.lines, "process list unreadable"));
-  const denyRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  const denyRoot = mkdtempSync(join(SUITE, "kore-proc-"));
   mkdirSync(join(denyRoot, "9"));
   symlinkSync("/proc/1/mem", join(denyRoot, "9", "cmdline"));
   const denied = await run({ argv: ["--no-quote"], useProc: true, procRoot: denyRoot });
   check("F1 an EACCES cmdline is refused", denied.code === 2 && has(denied.lines, "REFUND_REFUSED: process list unreadable") && !denied.lines.some((line) => line.includes("permission") || line.includes("/proc/1")));
-  const otherRoot = mkdtempSync(join(tmpdir(), "kore-proc-"));
+  const otherRoot = mkdtempSync(join(SUITE, "kore-proc-"));
   mkdirSync(join(otherRoot, "8"));
   writeFileSync(join(otherRoot, "8", "cmdline"), "bash\0");
   symlinkSync("/tmp", join(otherRoot, "8", "cwd"));
@@ -1198,6 +1410,7 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   const resume = await run({ argv: sendArgv(info), onPublish: (_b, _o, ctx) => land(ctx) });
   const backup = readdirSync(resume.dir).find((name) => name.startsWith("books.json.pre-refund-"));
   rmSync(join(resume.dir, "refund", "done.json"));
+  removeReceipts(resume.dir);
   copyFileSync(join(resume.dir, backup), resume.booksPath);
   const finished = await resume.again(["--verify"]);
   const finishedDone = JSON.parse(readFileSync(join(resume.dir, "refund", "done.json"), "utf8"));
@@ -1214,9 +1427,9 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   const info = await plan();
   const send = await run({ argv: sendArgv(info), uid: 4 });
   check("H3 send as non-root is refused before any write", send.code === 2 && has(send.lines, "REFUND_REFUSED: must run as root") && !existsSync(join(send.dir, "refund")) && send.counts.publish === 0 && send.counts.seed === 0);
-  const linkReal = mkdtempSync(join(tmpdir(), "kore-runner-real-"));
+  const linkReal = mkdtempSync(join(SUITE, "kore-runner-real-"));
   writeFileSync(join(linkReal, "run.mjs"), "// runner\n");
-  const linkDir = mkdtempSync(join(tmpdir(), "kore-runner-link-"));
+  const linkDir = mkdtempSync(join(SUITE, "kore-runner-link-"));
   symlinkSync(join(linkReal, "run.mjs"), join(linkDir, "run.mjs"));
   const linked = await run({
     argv: ["--no-quote"],
@@ -1224,7 +1437,7 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
     processes: () => [{ argv: ["node", join(linkDir, "run.mjs")], cwd: "/" }],
   });
   check("H3 a symlink whose realpath is the runner is refused", linked.code === 2 && has(linked.lines, "run.mjs is running"));
-  const presentRoot = mkdtempSync(join(tmpdir(), "kore-runner-present-"));
+  const presentRoot = mkdtempSync(join(SUITE, "kore-runner-present-"));
   writeFileSync(join(presentRoot, "run.mjs"), "// runner\n");
   const missing = await run({
     argv: ["--no-quote"],
@@ -1481,7 +1694,7 @@ function eventsAfterOpen(order, index) {
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
   async function production(argv, extra = {}) {
-    const dir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    const dir = mkdtempSync(join(SUITE, "kore-live-"));
     writeFileSync(join(dir, "books.json"), readFileSync(FIXTURE));
     const lines = [];
     const code = await main({
@@ -1501,7 +1714,7 @@ function eventsAfterOpen(order, index) {
     const noQuote = await production(["--no-quote"]);
     check("T27 no-quote uses one read-only client", noQuote.code === 0 && has(noQuote.lines, "REFUND_DRY_RUN_OK (no quote)") && has(noQuote.lines, "PLAN 578bd699c51acaa7c37699c7a8d679902dc41d52e8b85f875d8ef2a980ee6ea2") && calls.length === 1 && calls[0].readOnly === true && calls[0].hasKey === false && calls[0].network === "main");
     calls.length = 0;
-    const verifyDir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    const verifyDir = mkdtempSync(join(SUITE, "kore-live-"));
     writeFileSync(join(verifyDir, "books.json"), readFileSync(FIXTURE));
     mkdirSync(join(verifyDir, "refund"), { mode: 0o700 });
     writeFileSync(join(verifyDir, "refund", "intent.json"), `${JSON.stringify({
@@ -1524,7 +1737,7 @@ function eventsAfterOpen(order, index) {
     });
     check("T27 verify reads through the read-only client", verifiedCode === 3 && lines.some((line) => line.startsWith("REFUND_VERIFY: NOT_LANDED")) && calls.length === 1 && calls[0].readOnly === true && calls[0].hasKey === false);
     calls.length = 0;
-    const quoteDir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    const quoteDir = mkdtempSync(join(SUITE, "kore-live-"));
     writeFileSync(join(quoteDir, "books.json"), readFileSync(FIXTURE));
     writeFileSync(join(quoteDir, "seed.txt"), "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\n");
     const quotedLines = [];
@@ -1541,7 +1754,7 @@ function eventsAfterOpen(order, index) {
     const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
     raw.stake["keeta_not_a_real_key"] = (10n ** 18n).toString();
     raw.operator = (BigInt(raw.operator) - 10n ** 18n).toString();
-    const badDir = mkdtempSync(join(tmpdir(), "kore-live-"));
+    const badDir = mkdtempSync(join(SUITE, "kore-live-"));
     writeFileSync(join(badDir, "books.json"), JSON.stringify(raw));
     calls.length = 0;
     const badLines = [];
@@ -1656,7 +1869,7 @@ function faultFs(point) {
 }
 
 {
-  const dir = mkdtempSync(join(tmpdir(), "kore-uid-"));
+  const dir = mkdtempSync(join(SUITE, "kore-uid-"));
   writeFileSync(join(dir, "books.json"), readFileSync(FIXTURE));
   const books = booksFromJson(JSON.parse(readFileSync(join(dir, "books.json"), "utf8")));
   const lines = [];
@@ -1686,12 +1899,16 @@ function faultFs(point) {
 
 {
   const info = await plan();
-  const root = mkdtempSync(join(tmpdir(), "kore-n2-root-"));
+  const parent = mkdtempSync(join(SUITE, "n2-"));
+  const root = join(parent, "root");
+  mkdirSync(root);
   writeFileSync(join(root, "run.mjs"), "// root\n");
-  const linkParent = mkdtempSync(join(tmpdir(), "kore-n2-link-"));
+  const linkParent = join(parent, "link");
+  mkdirSync(linkParent);
   const link = join(linkParent, "root");
   symlinkSync(root, link);
-  const elsewhere = mkdtempSync(join(tmpdir(), "kore-n2-else-"));
+  const elsewhere = join(parent, "else");
+  mkdirSync(elsewhere);
   unlinkSync(join(root, "run.mjs"));
   const cwdLink = await run({
     argv: ["--no-quote"],
@@ -1706,7 +1923,7 @@ function faultFs(point) {
     processes: () => [{ argv: ["node", join(link, "run.mjs")], cwd: elsewhere }],
   });
   check("N2 an argv path through a symlink is the runner", argvLink.code === 2 && has(argvLink.lines, "REFUND_REFUSED: run.mjs is running"));
-  const sibling = `${root}2`;
+  const sibling = join(parent, "root2");
   mkdirSync(sibling);
   writeFileSync(join(sibling, "run.mjs"), "// sibling\n");
   const beside = await run({
@@ -1715,7 +1932,8 @@ function faultFs(point) {
     processes: () => [{ argv: ["node", join(sibling, "run.mjs")], cwd: "/" }],
   });
   check("N2 a sibling root is not the runner", beside.code === 0 && !has(beside.lines, "run.mjs is running") && !has(beside.lines, "process list unreadable"));
-  const outsideDir = mkdtempSync(join(tmpdir(), "kore-n2-out-"));
+  const outsideDir = join(parent, "out");
+  mkdirSync(outsideDir);
   writeFileSync(join(outsideDir, "run.mjs"), "// out\n");
   const outside = await run({
     argv: ["--no-quote"],
@@ -1723,18 +1941,17 @@ function faultFs(point) {
     processes: () => [{ argv: ["node", join(outsideDir, "run.mjs")], cwd: outsideDir }],
   });
   check("N2 a run.mjs outside the real root is not the runner", outside.code === 0 && !has(outside.lines, "run.mjs is running"));
-  const missingRoot = join(tmpdir(), `kore-n2-missing-${process.pid}`);
-  rmSync(missingRoot, { recursive: true, force: true });
+  const missing = join(parent, "missing");
   const literal = await run({
     argv: ["--no-quote"],
-    procRootDir: missingRoot,
-    processes: () => [{ argv: ["node", join(outsideDir, "run.mjs")], cwd: missingRoot }],
+    procRootDir: missing,
+    processes: () => [{ argv: ["node", join(outsideDir, "run.mjs")], cwd: missing }],
   });
   check("N2 a literal cwd match is the runner even when argv is outside", literal.code === 2 && has(literal.lines, "REFUND_REFUSED: run.mjs is running"));
   const literalMissing = await run({
     argv: ["--no-quote"],
-    procRootDir: missingRoot,
-    processes: () => [{ argv: ["node", "run.mjs"], cwd: missingRoot }],
+    procRootDir: missing,
+    processes: () => [{ argv: ["node", "run.mjs"], cwd: missing }],
   });
   check("N2 a literal match still counts when realpath of the root throws", literalMissing.code === 2 && has(literalMissing.lines, "REFUND_REFUSED: run.mjs is running") && !has(literalMissing.lines, "process list unreadable"));
   const unresolved = await run({
@@ -1743,17 +1960,30 @@ function faultFs(point) {
     processes: () => [{ argv: ["node", "/no/such/run.mjs"], cwd: "/" }],
   });
   check("N2 an unresolvable argv is refused without the path", unresolved.code === 2 && has(unresolved.lines, "REFUND_REFUSED: process list unreadable") && quiet(unresolved.lines) && unresolved.counts.quotes === 0);
+  const missingRun = await run({
+    argv: ["--no-quote"],
+    procRootDir: missing,
+    processes: () => [{ argv: ["node", join(outsideDir, "run.mjs")], cwd: outsideDir }],
+  });
+  check("F-D a missing root with a non-matching run.mjs is not refused", missingRun.code === 0 && !has(missingRun.lines, "process list unreadable") && !has(missingRun.lines, "run.mjs is running"));
   let seen = 0;
+  let quoteDir = "";
+  let stopRec = null;
   const late = await run({
     argv: sendArgv(info),
     procRootDir: root,
+    onQuote: (found) => { quoteDir = found; },
     processes: () => {
       seen += 1;
       if (seen === 1) return [];
+      const stopPath = join(quoteDir, "STOP");
+      const st = statSync(stopPath);
+      stopRec = { bytes: readFileSync(stopPath), mtimeMs: st.mtimeMs, mode: st.mode, ino: st.ino };
       return [{ argv: ["node", "/no/such/run.mjs"], cwd: "/" }];
     },
   });
-  check("N2 an unresolvable argv on the recheck removes STOP", late.code === 2 && has(late.lines, "REFUND_REFUSED: process list unreadable") && quiet(late.lines) && !existsSync(join(late.dir, "STOP")) && !existsSync(join(late.dir, "refund", "intent.json")) && late.counts.publish === 0);
+  const lateStop = statSync(join(late.dir, "STOP"));
+  check("N2 an unresolvable argv on the recheck keeps STOP", late.code === 2 && has(late.lines, "REFUND_REFUSED: process list unreadable") && quiet(late.lines) && existsSync(join(late.dir, "STOP")) && readFileSync(join(late.dir, "STOP")).equals(stopRec.bytes) && stopRec.bytes.equals(Buffer.from("refund in progress\n")) && lateStop.mtimeMs === stopRec.mtimeMs && lateStop.ino === stopRec.ino && (lateStop.mode & 0o777) === 0o600 && !existsSync(join(late.dir, "refund", "intent.json")) && late.counts.publish === 0);
 }
 
 {
@@ -1824,8 +2054,8 @@ function faultFs(point) {
   const dropped = await run({ argv: sendArgv(info), fs: faultFs("done"), onPublish: publishLanded(rawTotal) });
   const afterSend = readFileSync(dropped.booksPath);
   const doneAfterSend = existsSync(join(dropped.dir, "refund", "done.json"));
-  const verified = await dropped.again(["--verify"], { fs: undefined });
-  check("N4 a done.json write failure does not apply the books twice", dropped.code === 3 && has(dropped.lines, "REFUND_HOLD: unexpected DoneOpen") && !doneAfterSend && afterSend.equals(adjustedBytes) && verified.code === 3 && (has(verified.lines, "BOOKS_MISMATCH") || has(verified.lines, "UNKNOWN")) && readFileSync(dropped.booksPath).equals(afterSend) && quiet(dropped.lines));
+  const stopped = await twoVerifies(dropped, "unknown");
+  check("F-E a receipt with no done.json stops verify without writes", dropped.code === 3 && has(dropped.lines, "REFUND_HOLD: unexpected DoneOpen") && !doneAfterSend && afterSend.equals(adjustedBytes) && quiet(dropped.lines) && stopped && readFileSync(dropped.booksPath).equals(afterSend));
 }
 
 {
@@ -1900,11 +2130,16 @@ function faultFs(point) {
   const capLine = rawTotal + REFUND_FEE_CAP + RESERVE;
   const quoteLine = rawTotal + FEE + RESERVE;
   let dir = "";
+  let stopRec = null;
   const ran = await run({
     argv: sendArgv(info),
     onQuote: (found) => { dir = found; },
     onBalance: (n, live) => {
       if (n < 2) return live.balance;
+      if (!stopRec) {
+        const st = statSync(join(dir, "STOP"));
+        stopRec = { bytes: readFileSync(join(dir, "STOP")), mtimeMs: st.mtimeMs, mode: st.mode, ino: st.ino };
+      }
       const take = (live.balance - capLine) + 1n;
       const body = JSON.parse(readFileSync(join(dir, "books.json"), "utf8"));
       const operator = BigInt(body.operator);
@@ -1916,7 +2151,8 @@ function faultFs(point) {
     },
   });
   const next = ran.live.balance - ((ran.live.balance - capLine) + 1n);
-  check("N6 the recheck uses the fee cap not the quote", next >= quoteLine && next < capLine && ran.code === 2 && ran.lines.includes("REFUND_REFUSED: balance is short of the refund") && !existsSync(join(ran.dir, "STOP")) && !existsSync(join(ran.dir, "refund", "intent.json")) && ran.counts.publish === 0 && ran.counts.quotes === 1);
+  const kept = statSync(join(ran.dir, "STOP"));
+  check("N6 the recheck uses the fee cap not the quote", next >= quoteLine && next < capLine && ran.code === 2 && ran.lines.includes("REFUND_REFUSED: balance is short of the refund") && existsSync(join(ran.dir, "STOP")) && readFileSync(join(ran.dir, "STOP")).equals(stopRec.bytes) && stopRec.bytes.equals(Buffer.from("refund in progress\n")) && kept.mtimeMs === stopRec.mtimeMs && kept.ino === stopRec.ino && (kept.mode & 0o777) === 0o600 && !existsSync(join(ran.dir, "refund", "intent.json")) && ran.counts.publish === 0 && ran.counts.quotes === 1);
 }
 
 {
@@ -1942,6 +2178,14 @@ function faultFs(point) {
   const writes = order.filter((event) => event.op === "rename" && event.to.endsWith("/books.json")).length;
   const started = readFileSync(FIXTURE);
   check("N multi-tick landed verifies are finished and the books are written once", sent.code === 0 && has(sent.lines, "REFUND_LANDED") && has(sent.lines, "BOOKS_OK") && first.code === 0 && first.lines.includes("REFUND_VERIFY: LANDED (already finished)") && second.code === 0 && second.lines.includes("REFUND_VERIFY: LANDED (already finished)") && writes === 1 && readFileSync(sent.booksPath).equals(once) && !once.equals(started) && sameOwner(sent.booksPath));
+  const quotesAfter = sent.counts.quotes;
+  const publishAfter = sent.counts.publish;
+  const stopPath = join(sent.dir, "STOP");
+  const stopBefore = statSync(stopPath);
+  const stopBytes = readFileSync(stopPath);
+  const blocked = await sent.again(sendArgv(info));
+  const stopAfter = statSync(stopPath);
+  check("N multi-tick a kept STOP blocks a second send", blocked.code === 2 && blocked.lines.includes("REFUND_REFUSED: STOP is present") && sent.counts.quotes === quotesAfter && sent.counts.publish === publishAfter && stopBytes.equals(readFileSync(stopPath)) && stopBytes.equals(Buffer.from("refund in progress\n")) && stopAfter.mtimeMs === stopBefore.mtimeMs && stopAfter.ino === stopBefore.ino && (stopAfter.mode & 0o777) === 0o600);
 
   const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
   const shift = BigInt(raw.operator) + RAW;
@@ -1979,6 +2223,85 @@ function faultFs(point) {
   const brokenVerify = await broken.again(["--verify"]);
   const brokenAgain = await broken.again(["--verify"]);
   check("N multi-tick unreadable done.json stays unreadable", brokenVerify.code === 3 && brokenVerify.lines.includes("REFUND_VERIFY: UNKNOWN done.json unreadable") && brokenAgain.code === 3 && brokenAgain.lines.includes("REFUND_VERIFY: UNKNOWN done.json unreadable") && snapshot(broken.dir) === brokenShot);
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const sent = await run({ argv: sendArgv(info), onPublish: publishLanded(rawTotal) });
+  const adjusted = readFileSync(sent.booksPath);
+  const backup = readdirSync(sent.dir).find((name) => name.startsWith("books.json.pre-refund-"));
+  rmSync(join(sent.dir, "refund", "done.json"));
+  removeReceipts(sent.dir);
+  copyFileSync(join(sent.dir, backup), sent.booksPath);
+  let renames = 0;
+  const fault = faultFs("done");
+  const fs = {
+    ...fault,
+    renameSync(from, to) {
+      if (String(to).endsWith("/books.json")) renames += 1;
+      return fault.renameSync(from, to);
+    },
+  };
+  const mid = await sent.again(["--verify"], { fs });
+  const receiptNow = readdirSync(join(sent.dir, "refund")).some((name) => name.startsWith("receipt-"));
+  const booksAfter = readFileSync(sent.booksPath);
+  const stopped = await twoVerifies(sent, "unknown");
+  check("F-B a done.json write error in verify is UNKNOWN exit 3", sent.code === 0 && has(sent.lines, "BOOKS_OK") && mid.code === 3 && has(mid.lines, "REFUND_VERIFY: UNKNOWN unexpected DoneOpen") && !has(mid.lines, "REFUND_REFUSED:") && !has(mid.lines, "BOOKS_OK") && quiet(mid.lines) && !existsSync(join(sent.dir, "refund", "done.json")) && receiptNow && !existsSync(join(sent.dir, "books.json.tmp")) && booksAfter.equals(adjusted) && renames === 1 && stopped);
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  async function crashed(blockHash) {
+    return run({ argv: sendArgv(info), blockHash, fs: faultFs("done"), onPublish: publishLanded(rawTotal) });
+  }
+  function receiptPath(dir) {
+    const refundDir = join(dir, "refund");
+    const name = readdirSync(refundDir).find((item) => item.startsWith("receipt-") && item.endsWith(".json"));
+    return name ? join(refundDir, name) : "";
+  }
+  const other = await crashed();
+  const otherPath = receiptPath(other.dir);
+  const otherBody = JSON.parse(readFileSync(otherPath, "utf8"));
+  otherBody.block = "B".repeat(64);
+  writeFileSync(otherPath, `${JSON.stringify(otherBody, null, 2)}\n`);
+  check("F-E a receipt for another block also stops", other.code === 3 && !existsSync(join(other.dir, "refund", "done.json")) && await twoVerifies(other, "unknown"));
+  const leftover = await crashed();
+  const leftPath = receiptPath(leftover.dir);
+  const leftName = basename(leftPath);
+  const when = leftName.slice("receipt-".length, -".json".length);
+  renameSync(leftPath, join(leftover.dir, "refund", `receipt-${when}.json.tmp`));
+  check("F-E a receipt tmp leftover also stops", leftover.code === 3 && await twoVerifies(leftover, "unknown"));
+  const junk = await crashed();
+  writeFileSync(receiptPath(junk.dir), "not json");
+  check("F-E an unreadable receipt also stops", junk.code === 3 && await twoVerifies(junk, "unknown"));
+  const modeRun = await crashed();
+  chmodSync(join(modeRun.dir, "refund"), 0o755);
+  check("F-E a refund folder left at 0755 is not chmodded", modeRun.code === 3 && await twoVerifies(modeRun, "unknown") && (statSync(join(modeRun.dir, "refund")).mode & 0o777) === 0o755);
+  const listed = await crashed();
+  check("F-E a refund listing error stops verify", listed.code === 3 && await twoVerifies(listed, "unknown", () => ({
+    readdirSync(path, ...args) {
+      if (String(path).endsWith("/refund")) throw new Error("list");
+      return readdirSync(path, ...args);
+    },
+  })));
+  const upper = "AB".repeat(32);
+  const upperRun = await crashed(upper);
+  check("F-E a 64 uppercase block hash is printed", upperRun.code === 3 && await twoVerifies(upperRun, upper));
+  const lower = "ab".repeat(32);
+  const lowerRun = await crashed(lower);
+  check("F-E a 64 lowercase block hash prints unknown", lowerRun.code === 3 && await twoVerifies(lowerRun, "unknown"));
+  const secret = await crashed("SECRET-HASH/../x");
+  check("F-E a block that is not 64 uppercase hex prints unknown", secret.code === 3 && await twoVerifies(secret, "unknown"));
+}
+
+{
+  const extra = readdirSync(tmpdir()).filter((name) => !tmpBefore.has(name));
+  check("F-C the suite leaves nothing in tmpdir outside its parent", extra.length === 1 && extra[0] === basename(SUITE));
+  check("F-C the suite parent is safe to remove", suiteParentIsSafe(SUITE) && !suiteParentIsSafe(join(tmpdir(), "not-a-suite")) && !suiteParentIsSafe(join("/etc", "kore-refund-suite-nope")));
+  check("F-A STOP is unchanged after every main() run", stopViolations.length === 0);
+  check("F-A refund.mjs STOP and remove allowlist", allow.ok);
 }
 
 console.log(`refund checks ${passed}`);

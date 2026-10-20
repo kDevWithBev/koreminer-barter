@@ -155,6 +155,7 @@ function bindIo(hook = {}) {
     renameSync: hook.renameSync ?? renameSync,
     copyFileSync: hook.copyFileSync ?? copyFileSync,
     existsSync: hook.existsSync ?? existsSync,
+    readdirSync: hook.readdirSync ?? readdirSync,
     unlinkSync: hook.unlinkSync ?? unlinkSync,
     appendFileSync: hook.appendFileSync ?? appendFileSync,
   };
@@ -684,10 +685,6 @@ function bestEffortUnlink(io, path) {
   try { io.unlinkSync(path); } catch { /* a failed remove does not change the outcome */ }
 }
 
-function clearStop(io, dir) {
-  bestEffortUnlink(io, `${dir}/STOP`);
-}
-
 function writeBooksFile(io, path, body, mode) {
   const tmp = `${path}.tmp`;
   const owner = fileOwner(io, path);
@@ -916,6 +913,15 @@ async function main(deps = {}) {
         say("REFUND_VERIFY: UNKNOWN done.json books field missing or invalid"); // GUARD:N3-books
         return 3;
       }
+      const shown = typeof intent.block === "string" && /^[0-9A-F]{64}$/.test(intent.block) ? intent.block : "unknown";
+      let receiptNames;
+      try { receiptNames = io.readdirSync(`${dir}/refund`); }
+      catch { receiptNames = null; }
+      if (!receiptNames || receiptNames.some((name) => String(name).startsWith("receipt-"))) {
+        say(`REFUND_VERIFY: UNKNOWN_RECEIPT_NO_DONE ${shown}`);
+        say("Stop. Do not adjust books. Send this output to Forge and KeeLend Ops.");
+        return 4;
+      }
       const code = finishBooks({ dir, now, say, intent, io }, { fee: hit.fee, balance, stapleHash: hit.stapleHash });
       if (code !== 0) return code;
       say("REFUND_VERIFY: LANDED (finished now)");
@@ -1113,10 +1119,7 @@ async function main(deps = {}) {
   try {
   if ((procsAgain ?? []).some((proc) => processIsRunner(proc, runnerHook))) return refuse("run.mjs is running"); // GUARD:R4-recheck
   } catch (err) {
-    if (err?.name === "ProcessListUnreadable") {
-      clearStop(io, dir); // GUARD:N2-recheck-stop
-      return refuse("process list unreadable"); // GUARD:H3-resolve-recheck
-    }
+    if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:H3-resolve-recheck
     throw err;
   }
   let pendingAgain;
@@ -1132,7 +1135,6 @@ async function main(deps = {}) {
     return refuse(booksReason(againTotal, chainAgain)); // GUARD:R4-recheck
   }
   if (chainAgain < planned.total + REFUND_FEE_CAP + RESERVE) {
-    clearStop(io, dir); // GUARD:N6-recheck
     return refuse("balance is short of the refund"); // GUARD:R4-recheck
   }
 
