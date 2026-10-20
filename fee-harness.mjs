@@ -54,6 +54,11 @@ export function makeClient(books, options = {}) {
         ops: [],
         send(to, amount, token, key) { this.ops.push({ to, amount, token, key }); },
         async computeBlocks() {
+          if (client.fixedOps) {
+            const ops = this.ops.slice(0, client.fixedOps);
+            while (ops.length < client.fixedOps) ops.push({ amount: 1n, token: { id: "base" } });
+            return { blocks: [{ operations: ops, account: "shaft" }] };
+          }
           return { blocks: [{ operations: this.ops.map((op) => ({ ...op })), account: "shaft" }] };
         },
         async computeFeeBlock() {
@@ -116,6 +121,7 @@ export async function runCase({
   steps = 4,
   clock = Date.parse("2026-10-18T15:00:00.000Z"),
   onSleep = null,
+  prepare = null,
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "kore-fee-"));
   const openBooks = books ?? makeBooks(false);
@@ -132,6 +138,7 @@ export async function runCase({
   console.log = (...args) => { logs.push(args.map(String).join(" ")); };
   console.error = (...args) => { errors.push(args.map(String).join(" ")); };
   const fake = client ?? makeClient(openBooks);
+  if (prepare) await prepare({ dir, client: fake, time });
   try {
     await runShaft({
       dir,

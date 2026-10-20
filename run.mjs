@@ -89,20 +89,26 @@ export async function runShaft({
     return client.publishBuilder(builder, { generateFeeBlock: cappedFeeBlock(), quotes });
   }
 
+  function clampFeePerTx(value) {
+    let fee = FEE_PER_TX;
+    try { fee = BigInt(value ?? FEE_PER_TX); } catch { return FEE_PER_TX; }
+    if (fee <= 0n || fee > bundleCap() / 50n) return FEE_PER_TX;
+    return fee;
+  }
+
   function readState() {
     try {
       const saved = JSON.parse(readFileSync(statePath, "utf8"));
       return {
         windowStart: Number(saved.windowStart) || now(),
         spent: BigInt(saved.spent ?? "0"),
-        feePerTx: BigInt(saved.feePerTx ?? FEE_PER_TX.toString()),
-        payoutFee: BigInt(saved.payoutFee ?? saved.feePerTx ?? FEE_PER_TX.toString()),
+        feePerTx: clampFeePerTx(saved.feePerTx ?? FEE_PER_TX.toString()),
         payoutDay: typeof saved.payoutDay === "string" ? saved.payoutDay : "",
         done: Array.isArray(saved.done) ? saved.done.filter((item) => typeof item === "string") : [],
         closeOpen: saved.closeOpen === true,
       };
     } catch {
-      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutFee: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false };
+      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false };
     }
   }
 
@@ -185,7 +191,6 @@ export async function runShaft({
       windowStart: state.windowStart,
       spent: state.spent.toString(),
       feePerTx: (state.feePerTx ?? FEE_PER_TX).toString(),
-      payoutFee: (state.payoutFee ?? state.feePerTx ?? FEE_PER_TX).toString(),
       payoutDay: state.payoutDay ?? "",
       done: state.done ?? [],
       closeOpen: state.closeOpen === true,
@@ -206,6 +211,7 @@ export async function runShaft({
 
   let state = readState();
   const books = loadBooks();
+  writeState(state);
   let blockNo = 0;
   let koreStart = koreStartIn === null ? await client.balance(kore) : koreStartIn;
 
@@ -389,8 +395,7 @@ function settlePayout(koreBal) {
         state = {
           windowStart: now(),
           spent: 0n,
-          feePerTx: state.feePerTx ?? FEE_PER_TX,
-          payoutFee: state.payoutFee ?? FEE_PER_TX,
+          feePerTx: clampFeePerTx(state.feePerTx ?? FEE_PER_TX),
           payoutDay: state.payoutDay ?? "",
           done: state.done ?? [],
           closeOpen: state.closeOpen === true,
