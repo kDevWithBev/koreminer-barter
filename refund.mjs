@@ -1,6 +1,6 @@
 // Refund one batch of Koreminer KTA from the shaft.
 // Dry run is the default. This file never calls client.send or client.recover.
-// Test hooks (drainSha, plannerFault, drainPath, procRoot, uid) are read only from
+// Test hooks (drainSha, plannerFault, drainPath, procRoot, procRootDir, uid) are read only from
 // the deps object passed to main(). No environment variable and no command-line
 // flag can set them. A custom drainPath is still checked against DRAIN_SHA256
 // unless drainSha is also passed on that same deps object.
@@ -24,6 +24,7 @@ import {
   realpathSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -154,6 +155,7 @@ function bindIo(hook = {}) {
     renameSync: hook.renameSync ?? renameSync,
     copyFileSync: hook.copyFileSync ?? copyFileSync,
     existsSync: hook.existsSync ?? existsSync,
+    unlinkSync: hook.unlinkSync ?? unlinkSync,
     appendFileSync: hook.appendFileSync ?? appendFileSync,
   };
 }
@@ -516,7 +518,8 @@ function readDrain(io, deps) {
   return { bytes, parsed: JSON.parse(Buffer.from(bytes).toString("utf8")), expected, sha: sha256(bytes) };
 }
 
-function processIsRunner(proc) {
+function processIsRunner(proc, hook = {}) {
+  const root = typeof hook.procRootDir === "string" ? hook.procRootDir : ROOT;
   const argv = Array.isArray(proc?.argv) ? proc.argv.map(String) : [];
   const cwd = typeof proc?.cwd === "string" ? proc.cwd : "";
   const runners = [];
@@ -525,13 +528,24 @@ function processIsRunner(proc) {
     runners.push(arg);
   }
   if (runners.length === 0) return false;
+  // Literal checks from 459b7e0. A match is the runner, and no realpath is needed.
+  for (const arg of runners) { // GUARD:H3-literal
+    if (cwd === root) return true;
+    const abs = arg.startsWith("/") ? arg : resolve(cwd || "/", arg);
+    if (abs === root || abs.startsWith(`${root}/`)) return true;
+  }
   let rootReal;
-  try { rootReal = realpathSync(ROOT); }
+  try { rootReal = realpathSync(root); }
+  catch { return false; } // GUARD:H3-root-realpath
+  const rootPrefix = `${rootReal}/`;
+  let cwdReal;
+  try { cwdReal = realpathSync(cwd || "/"); }
   catch {
     const err = new Error("process list unreadable");
     err.name = "ProcessListUnreadable";
-    throw err;
+    throw err; // GUARD:H3-cwd-realpath
   }
+  if (cwdReal === rootReal) return true; // GUARD:H3-realpath-cwd
   for (const arg of runners) {
     const abs = arg.startsWith("/") ? arg : resolve(cwd || "/", arg);
     let real;
@@ -541,7 +555,7 @@ function processIsRunner(proc) {
       err.name = "ProcessListUnreadable";
       throw err; // GUARD:H3-argv-realpath
     }
-    if (real === rootReal || real.startsWith(`${rootReal}/`)) return true; // GUARD:H3-realpath
+    if (real === rootReal || real.startsWith(rootPrefix)) return true; // GUARD:H3-realpath
   }
   return false;
 }
@@ -662,7 +676,50 @@ function sealDone(ctx, refundDir, booksField) {
 
 function confirmBooks(io, path, prior) {
   const after = io.statSync(path);
-  return after.uid === prior.uid && after.gid === prior.gid && (after.mode & 0o777) === (prior.mode & 0o777);
+  const mask = 0o7777; // GUARD:H7-mode-mask
+  return after.uid === prior.uid && after.gid === prior.gid && (after.mode & mask) === (prior.mode & mask);
+}
+
+function bestEffortUnlink(io, path) {
+  try { io.unlinkSync(path); } catch { /* a failed remove does not change the outcome */ }
+}
+
+function clearStop(io, dir) {
+  bestEffortUnlink(io, `${dir}/STOP`);
+}
+
+function writeBooksFile(io, path, body, mode) {
+  const tmp = `${path}.tmp`;
+  const owner = fileOwner(io, path);
+  let renamed = false;
+  try {
+    const fd = io.openSync(tmp, "w", mode);
+    try {
+      io.writeFileSync(fd, body);
+      io.fchownSync(fd, owner.uid, owner.gid); // GUARD:H7-owner
+      io.fchmodSync(fd, mode); // GUARD:H7-mode
+      io.fsyncSync(fd); // GUARD:H7-fsync
+    } finally { io.closeSync(fd); }
+    io.renameSync(tmp, path);
+    renamed = true;
+    fsyncDir(io, dirname(path));
+  } catch (err) {
+    if (!renamed) bestEffortUnlink(io, tmp); // GUARD:N4-tmp
+    if (err && typeof err === "object") err.booksRenamed = renamed;
+    throw err;
+  }
+}
+
+function sealMismatch(ctx, refundDir) {
+  sealDone(ctx, refundDir, "mismatch"); // GUARD:N4-before
+  ctx.say("BOOKS_MISMATCH");
+  return 3;
+}
+
+function sealUnconfirmed(ctx, refundDir) {
+  sealDone(ctx, refundDir, "unconfirmed"); // GUARD:N4-after
+  ctx.say("BOOKS_UNCONFIRMED");
+  return 3;
 }
 
 function finishBooks(ctx, verdict) {
@@ -672,7 +729,6 @@ function finishBooks(ctx, verdict) {
   const booksPath = `${ctx.dir}/books.json`;
   const books = loadBooks(ctx.io, ctx.dir);
   const reserveBefore = Object.prototype.hasOwnProperty.call(ctx, "reserveBefore") ? ctx.reserveBefore : books.share.reserve;
-  const prior = ctx.io.statSync(booksPath);
   applyBooks(books, ctx.intent.recipients, BigInt(ctx.intent.addbacks), verdict.fee); // GUARD:books-adjust
   const problem = booksAssertions(books, verdict.balance, ctx.intent.recipients, reserveBefore); // GUARD:R5
   const receipt = {
@@ -689,23 +745,27 @@ function finishBooks(ctx, verdict) {
     plan: ctx.intent.plan,
   };
   atomicWrite(ctx.io, `${refundDir}/receipt-${when}.json`, `${JSON.stringify(receipt, null, 2)}\n`);
-  if (problem) {
-    sealDone(ctx, refundDir, "mismatch");
-    ctx.say("BOOKS_MISMATCH");
-    return 3;
-  }
+  if (problem) return sealMismatch(ctx, refundDir);
+  let prior;
+  try { prior = ctx.io.statSync(booksPath); }
+  catch { return sealMismatch(ctx, refundDir); } // GUARD:N4-stat
   const backup = `${ctx.dir}/books.json.pre-refund-${when}`;
-  ctx.io.copyFileSync(booksPath, backup);
-  ctx.io.chmodSync(backup, 0o600);
-  const fd = ctx.io.openSync(backup, "r+");
-  try { ctx.io.fsyncSync(fd); } finally { ctx.io.closeSync(fd); }
-  const booksMode = prior.mode & 0o777;
-  atomicWrite(ctx.io, booksPath, `${JSON.stringify(booksToJson(books), null, 2)}\n`, booksMode); // GUARD:H7-books
-  if (!confirmBooks(ctx.io, booksPath, prior)) {
-    sealDone(ctx, refundDir, "mismatch");
-    ctx.say("BOOKS_MISMATCH");
-    return 3;
+  try {
+    ctx.io.copyFileSync(booksPath, backup);
+    ctx.io.chmodSync(backup, 0o600);
+    const fd = ctx.io.openSync(backup, "r+");
+    try { ctx.io.fsyncSync(fd); } finally { ctx.io.closeSync(fd); }
+  } catch { return sealMismatch(ctx, refundDir); } // GUARD:N4-backup
+  const booksMode = prior.mode & 0o7777; // GUARD:H7-mode-mask
+  try {
+    writeBooksFile(ctx.io, booksPath, `${JSON.stringify(booksToJson(books), null, 2)}\n`, booksMode); // GUARD:H7-books
+  } catch (err) {
+    if (err?.booksRenamed) return sealUnconfirmed(ctx, refundDir);
+    return sealMismatch(ctx, refundDir);
   }
+  try {
+    if (!confirmBooks(ctx.io, booksPath, prior)) return sealUnconfirmed(ctx, refundDir); // GUARD:H7-confirm
+  } catch { return sealUnconfirmed(ctx, refundDir); } // GUARD:N4-confirm
   sealDone(ctx, refundDir, "adjusted"); // GUARD:H7-done
   ctx.say("BOOKS_OK");
   return 0;
@@ -831,15 +891,30 @@ async function main(deps = {}) {
     });
     if (state === "LANDED") {
       if (io.existsSync(`${dir}/refund/done.json`)) { // GUARD:R3-once
-        let doneBody = {};
+        let doneBody;
         try { doneBody = JSON.parse(io.readFileSync(`${dir}/refund/done.json`, "utf8")); }
-        catch { doneBody = {}; }
+        catch {
+          say("REFUND_VERIFY: UNKNOWN done.json unreadable"); // GUARD:N3-unreadable
+          return 3;
+        }
+        if (!doneBody || typeof doneBody !== "object" || Array.isArray(doneBody)) {
+          say("REFUND_VERIFY: UNKNOWN done.json unreadable"); // GUARD:N3-unreadable
+          return 3;
+        }
+        if (doneBody.books === "adjusted") { // GUARD:H2-verify-done
+          say("REFUND_VERIFY: LANDED (already finished)");
+          return 0;
+        }
         if (doneBody.books === "mismatch") { // GUARD:H2-verify-mismatch
           say("REFUND_VERIFY: LANDED books not adjusted");
           return 3;
         }
-        say("REFUND_VERIFY: LANDED (already finished)");
-        return 0;
+        if (doneBody.books === "unconfirmed") { // GUARD:N3-unconfirmed
+          say("REFUND_VERIFY: LANDED books written, not confirmed");
+          return 3;
+        }
+        say("REFUND_VERIFY: UNKNOWN done.json books field missing or invalid"); // GUARD:N3-books
+        return 3;
       }
       const code = finishBooks({ dir, now, say, intent, io }, { fee: hit.fee, balance, stapleHash: hit.stapleHash });
       if (code !== 0) return code;
@@ -850,6 +925,7 @@ async function main(deps = {}) {
     return 3;
   }
 
+  const runnerHook = typeof deps.procRootDir === "string" ? { procRootDir: deps.procRootDir } : {};
   const state = await valueOf(systemctl);
   if (state !== "inactive" && state !== "failed") return refuse("runner is active"); // GUARD:G1-systemctl
   let procs;
@@ -860,7 +936,7 @@ async function main(deps = {}) {
     throw err;
   }
   try {
-  if ((procs ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:G1-process
+  if ((procs ?? []).some((proc) => processIsRunner(proc, runnerHook))) return refuse("run.mjs is running"); // GUARD:G1-process
   } catch (err) {
     if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:H3-resolve
     throw err;
@@ -1035,9 +1111,12 @@ async function main(deps = {}) {
     throw err;
   }
   try {
-  if ((procsAgain ?? []).some(processIsRunner)) return refuse("run.mjs is running"); // GUARD:R4-recheck
+  if ((procsAgain ?? []).some((proc) => processIsRunner(proc, runnerHook))) return refuse("run.mjs is running"); // GUARD:R4-recheck
   } catch (err) {
-    if (err?.name === "ProcessListUnreadable") return refuse("process list unreadable"); // GUARD:H3-resolve-recheck
+    if (err?.name === "ProcessListUnreadable") {
+      clearStop(io, dir); // GUARD:N2-recheck-stop
+      return refuse("process list unreadable"); // GUARD:H3-resolve-recheck
+    }
     throw err;
   }
   let pendingAgain;
@@ -1052,7 +1131,10 @@ async function main(deps = {}) {
   if (againTotal !== chainAgain || (booksAgain.pendingDrops ?? []).length > 0) {
     return refuse(booksReason(againTotal, chainAgain)); // GUARD:R4-recheck
   }
-  if (chainAgain < planned.total + REFUND_FEE_CAP + RESERVE) return refuse("balance is short of the refund"); // GUARD:R4-recheck
+  if (chainAgain < planned.total + REFUND_FEE_CAP + RESERVE) {
+    clearStop(io, dir); // GUARD:N6-recheck
+    return refuse("balance is short of the refund"); // GUARD:R4-recheck
+  }
 
   const intent = {
     block: hashText(block.hash),

@@ -1,0 +1,7 @@
+{
+  "name": "koreminer-barter",
+  "private": true,
+  "dependencies": {
+    "@keetanetwork/keetanet-client": "0.18.7"
+  }
+}

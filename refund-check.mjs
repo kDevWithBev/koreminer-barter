@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, copyFileSync, existsSync, fchmodSync, fchownSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, fchmodSync, fchownSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accounted, booksFromJson } from "./books.mjs";
@@ -230,14 +231,15 @@ async function run(opts = {}) {
     client,
     fs,
     drainPath: opts.drainPath,
+    uid: opts.uid !== undefined ? opts.uid : 0,
   };
   if (opts.useProc) {
     delete baseDeps.processes;
     baseDeps.procRoot = opts.procRoot;
   }
+  if (typeof opts.procRootDir === "string") baseDeps.procRootDir = opts.procRootDir;
   if (opts.drainSha !== undefined) baseDeps.drainSha = opts.drainSha;
   if (opts.plannerFault) baseDeps.plannerFault = opts.plannerFault;
-  if (opts.uid !== undefined) baseDeps.uid = opts.uid;
   async function go(argv, extra = {}) {
     const lines = [];
     const code = await main({
@@ -531,15 +533,16 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
 
 {
   let sdk = null;
-  try { sdk = await import("@keetanetwork/keetanet-client"); } catch { /* try the local install */ }
+  let sdkVersion = "";
+  try {
+    const loaded = await import("@keetanetwork/keetanet-client");
+    sdk = loaded.default ?? loaded;
+    sdkVersion = createRequire(import.meta.url)("@keetanetwork/keetanet-client/package.json").version;
+  } catch { sdk = null; }
   if (!sdk) {
-    try { sdk = await import("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/client/index.js"); } catch { sdk = null; }
-  }
-  if (!sdk) {
-    console.log("T15 skipped: @keetanetwork/keetanet-client 0.18.8 could not be imported");
+    console.log("T15 skipped: @keetanetwork/keetanet-client 0.18.7 could not be imported");
   } else {
-    const version = JSON.parse(readFileSync("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/package.json", "utf8")).version;
-    check("T15 sdk is 0.18.8", version === "0.18.8");
+    check("T15 sdk is 0.18.7", sdkVersion === "0.18.7");
     const Account = sdk.lib.Account;
     const Block = sdk.lib.Block;
     const base = Account.generateBaseAddresses(0x5382n).baseToken;
@@ -787,21 +790,6 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
   check("T18 verify of pending writes nothing", verifyStill.code === 3 && has(verifyStill.lines, "REFUND_VERIFY: PENDING") && snapshot(still.dir) === beforeStill);
 }
 
-const hadKoreminerRoot = existsSync("/opt/koreminer");
-const hadHomeRunner = existsSync("/home/x");
-if (!existsSync("/opt/koreminer/run.mjs")) {
-  mkdirSync("/opt/koreminer", { recursive: true });
-  writeFileSync("/opt/koreminer/run.mjs", "// koreminer runner fixture\n");
-}
-if (!existsSync("/home/x/run.mjs")) {
-  mkdirSync("/home/x", { recursive: true });
-  writeFileSync("/home/x/run.mjs", "// outside the koreminer root\n");
-}
-process.on("exit", () => {
-  if (!hadKoreminerRoot) rmSync("/opt/koreminer", { recursive: true, force: true });
-  if (!hadHomeRunner) rmSync("/home/x", { recursive: true, force: true });
-});
-
 {
   const info = await plan();
   const stopped = await run({
@@ -966,13 +954,23 @@ function rowsOf(result) {
     [["node", "run.mjs"], "/opt/koreminer", true],
     [["/usr/bin/node", "/opt/koreminer/run.mjs"], "/", true],
     [["node", "./run.mjs"], "/opt/koreminer", true],
-    [["node", "/home/x/run.mjs"], "/home/x", false],
     [["node", "refund.mjs"], "/opt/koreminer", false],
   ];
+  const outsideRoot = mkdtempSync(join(tmpdir(), "kore-outside-"));
+  mkdirSync(outsideRoot, { recursive: true });
+  writeFileSync(join(outsideRoot, "run.mjs"), "// outside\n");
+  const realRoot = mkdtempSync(join(tmpdir(), "kore-real-root-"));
+  writeFileSync(join(realRoot, "run.mjs"), "// root\n");
   for (const [argv, cwd, refuse] of cases) {
     const result = await run({ argv: ["--no-quote"], processes: () => [{ argv, cwd }] });
     check(`T26 ${argv.join(" ")} cwd ${cwd}`, refuse ? result.code === 2 && has(result.lines, "run.mjs is running") : result.code === 0);
   }
+  const outside = await run({
+    argv: ["--no-quote"],
+    procRootDir: realRoot,
+    processes: () => [{ argv: ["node", join(outsideRoot, "run.mjs")], cwd: outsideRoot }],
+  });
+  check("T26 a run.mjs outside the root is not the runner", outside.code === 0 && !has(outside.lines, "run.mjs is running"));
 }
 
 const none = await run({ argv: ["--verify"] });
@@ -1143,7 +1141,8 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
     },
   });
   const started = readdirSync(join(landed.dir, "refund")).some((name) => name.startsWith("receipt-") || name === "done.json");
-  check("F3 an unexpected verify error is UNKNOWN", mid.code === 3 && has(mid.lines, "REFUND_VERIFY: UNKNOWN unexpected BoomVerify") && !has(mid.lines, "SECRET-VERIFY") && !has(mid.lines, "REFUND_REFUSED:") && started);
+  const doneBody = JSON.parse(readFileSync(join(landed.dir, "refund", "done.json"), "utf8"));
+  check("F3 a backup failure during verify seals a mismatch", mid.code === 3 && has(mid.lines, "BOOKS_MISMATCH") && doneBody.books === "mismatch" && !has(mid.lines, "SECRET-VERIFY") && !has(mid.lines, "BoomVerify") && !has(mid.lines, "REFUND_REFUSED:") && !has(mid.lines, "unexpected") && started);
 }
 
 {
@@ -1215,12 +1214,21 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
   const info = await plan();
   const send = await run({ argv: sendArgv(info), uid: 4 });
   check("H3 send as non-root is refused before any write", send.code === 2 && has(send.lines, "REFUND_REFUSED: must run as root") && !existsSync(join(send.dir, "refund")) && send.counts.publish === 0 && send.counts.seed === 0);
+  const linkReal = mkdtempSync(join(tmpdir(), "kore-runner-real-"));
+  writeFileSync(join(linkReal, "run.mjs"), "// runner\n");
   const linkDir = mkdtempSync(join(tmpdir(), "kore-runner-link-"));
-  symlinkSync("/opt/koreminer/run.mjs", join(linkDir, "run.mjs"));
-  const linked = await run({ argv: ["--no-quote"], processes: () => [{ argv: ["node", join(linkDir, "run.mjs")], cwd: "/" }] });
+  symlinkSync(join(linkReal, "run.mjs"), join(linkDir, "run.mjs"));
+  const linked = await run({
+    argv: ["--no-quote"],
+    procRootDir: linkReal,
+    processes: () => [{ argv: ["node", join(linkDir, "run.mjs")], cwd: "/" }],
+  });
   check("H3 a symlink whose realpath is the runner is refused", linked.code === 2 && has(linked.lines, "run.mjs is running"));
+  const presentRoot = mkdtempSync(join(tmpdir(), "kore-runner-present-"));
+  writeFileSync(join(presentRoot, "run.mjs"), "// runner\n");
   const missing = await run({
     argv: ["--no-quote"],
+    procRootDir: presentRoot,
     processes: () => [{ argv: ["node", "/no/such/run.mjs"], cwd: "/" }],
   });
   check("H3 an unresolvable run.mjs path is unreadable", missing.code === 2 && has(missing.lines, "REFUND_REFUSED: process list unreadable") && !has(missing.lines, "/no/such") && !has(missing.lines, "ENOENT") && !has(missing.lines, "unexpected"));
@@ -1424,21 +1432,33 @@ function eventsAfterOpen(order, index) {
   if (typeof nodeModule.registerHooks !== "function") {
     console.log("skip T27 (registerHooks needs Node 22.15+)");
   } else {
+  let sdkEntry = "";
+  let sdkVersion = "";
+  try {
+    const req = createRequire(import.meta.url);
+    sdkEntry = req.resolve("@keetanetwork/keetanet-client");
+    sdkVersion = req("@keetanetwork/keetanet-client/package.json").version;
+  } catch {
+    console.log("T27 skipped: @keetanetwork/keetanet-client 0.18.7 could not be imported");
+    sdkEntry = "";
+  }
+  if (sdkEntry) {
   const { registerHooks } = nodeModule;
   const { pathToFileURL } = await import("node:url");
   registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier === "@keetanetwork/keetanet-client") {
         return {
-          url: pathToFileURL("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/client/index.js").href,
+          url: pathToFileURL(sdkEntry).href,
           shortCircuit: true,
         };
       }
       return nextResolve(specifier, context);
     },
   });
-  const sdk = await import("@keetanetwork/keetanet-client");
-  check("T27 sdk module is 0.18.8", JSON.parse(readFileSync("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/package.json", "utf8")).version === "0.18.8");
+  const loaded = await import("@keetanetwork/keetanet-client");
+  const sdk = loaded.default ?? loaded;
+  check("T27 sdk module is 0.18.7", sdkVersion === "0.18.7");
   const calls = [];
   const realFrom = sdk.UserClient.fromNetwork;
   sdk.UserClient.fromNetwork = function fromNetwork(network, signer, options) {
@@ -1468,6 +1488,7 @@ function eventsAfterOpen(order, index) {
       argv,
       dir,
       now: NOW,
+      uid: 0,
       output: (line) => lines.push(line),
       systemctl: () => "inactive",
       processes: () => [],
@@ -1496,6 +1517,7 @@ function eventsAfterOpen(order, index) {
       argv: ["--verify"],
       dir: verifyDir,
       now: NOW,
+      uid: 0,
       output: (line) => lines.push(line),
       systemctl: () => "inactive",
       processes: () => [],
@@ -1510,6 +1532,7 @@ function eventsAfterOpen(order, index) {
       argv: [],
       dir: quoteDir,
       now: NOW,
+      uid: 0,
       output: (line) => quotedLines.push(line),
       systemctl: () => "inactive",
       processes: () => [],
@@ -1526,6 +1549,7 @@ function eventsAfterOpen(order, index) {
       argv: ["--no-quote"],
       dir: badDir,
       now: NOW,
+      uid: 0,
       output: (line) => badLines.push(line),
       systemctl: () => "inactive",
       processes: () => [],
@@ -1537,6 +1561,424 @@ function eventsAfterOpen(order, index) {
     globalThis.fetch = previousFetch;
   }
   }
+  }
+}
+
+function publishLanded(rawTotal) {
+  return (_b, _o, ctx) => {
+    ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+    ctx.live.balance -= rawTotal + FEE;
+    return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+  };
+}
+
+function namedFault(name) {
+  const err = new Error(`SECRET-${name}-/var/tmp/books.json`);
+  err.name = name;
+  return err;
+}
+
+function quiet(lines) {
+  return !lines.some((line) => line.includes("SECRET-") || line.includes("/var/tmp/books.json") || line.includes("/no/such") || line.includes("ENOENT"));
+}
+
+function faultFs(point) {
+  const booksTmp = new Set();
+  const backupFds = new Set();
+  const dirFds = new Set();
+  let renamed = false;
+  let fired = false;
+  function once(name) {
+    if (fired) return;
+    fired = true;
+    throw namedFault(name);
+  }
+  return {
+    openSync(path, flags, mode) {
+      const text = String(path);
+      if (point === "open" && text.endsWith("/books.json.tmp")) once("BooksOpen");
+      if (point === "done" && text.endsWith("/done.json.tmp")) throw namedFault("DoneOpen");
+      const fd = openSync(path, flags, mode);
+      if (text.endsWith("/books.json.tmp")) booksTmp.add(fd);
+      if (text.includes("books.json.pre-refund-")) backupFds.add(fd);
+      if (flags === "r") dirFds.add(fd);
+      return fd;
+    },
+    writeFileSync(target, body, ...rest) {
+      if (point === "write" && booksTmp.has(target)) once("BooksWrite");
+      return writeFileSync(target, body, ...rest);
+    },
+    fchownSync(fd, uid, gid) {
+      if (point === "fchown" && booksTmp.has(fd)) once("BooksChown");
+      return fchownSync(fd, uid, gid);
+    },
+    fchmodSync(fd, mode) {
+      if (point === "fchmod" && booksTmp.has(fd)) once("BooksChmod");
+      return fchmodSync(fd, mode);
+    },
+    fsyncSync(fd) {
+      if (point === "backup-fsync" && backupFds.has(fd)) once("BackupFsync");
+      if (point === "fsync" && booksTmp.has(fd)) once("BooksFsync");
+      if (point === "dir-fsync" && renamed && dirFds.has(fd)) once("DirFsync");
+      return fsyncSync(fd);
+    },
+    closeSync(fd) {
+      if (point === "close" && booksTmp.has(fd)) once("BooksClose");
+      booksTmp.delete(fd);
+      backupFds.delete(fd);
+      dirFds.delete(fd);
+      return closeSync(fd);
+    },
+    renameSync(from, to) {
+      if (point === "rename" && String(to).endsWith("/books.json")) throw namedFault("BooksRename");
+      const result = renameSync(from, to);
+      if (String(to).endsWith("/books.json")) renamed = true;
+      return result;
+    },
+    copyFileSync(from, to) {
+      if (point === "copy" && String(to).includes("books.json.pre-refund-")) throw namedFault("BackupCopy");
+      return copyFileSync(from, to);
+    },
+    chmodSync(path, mode) {
+      if (point === "chmod" && String(path).includes("books.json.pre-refund-")) throw namedFault("BackupChmod");
+      return chmodSync(path, mode);
+    },
+    statSync(path, ...args) {
+      const text = String(path);
+      if (point === "stat" && text.endsWith("/books.json")) throw namedFault("BooksStat");
+      const st = statSync(path, ...args);
+      if (point === "confirm-stat" && renamed && text.endsWith("/books.json")) throw namedFault("ConfirmStat");
+      if (point === "confirm-mode" && renamed && text.endsWith("/books.json")) return { uid: st.uid, gid: st.gid, mode: 0o100600 };
+      if (point === "sticky" && text.endsWith("/books.json")) return { uid: st.uid, gid: st.gid, mode: renamed ? 0o101640 : 0o100640 };
+      return st;
+    },
+  };
+}
+
+{
+  const dir = mkdtempSync(join(tmpdir(), "kore-uid-"));
+  writeFileSync(join(dir, "books.json"), readFileSync(FIXTURE));
+  const books = booksFromJson(JSON.parse(readFileSync(join(dir, "books.json"), "utf8")));
+  const lines = [];
+  const code = await main({
+    argv: ["--no-quote"],
+    dir,
+    now: NOW,
+    output: (line) => lines.push(line),
+    systemctl: () => "inactive",
+    processes: () => [],
+    accountFrom: (id) => ({ publicKeyString: id }),
+    base: BASE,
+    baseText: BASE_TEXT,
+    client: {
+      async balance() { return accounted(books); },
+      async pendingBlock() { return null; },
+      async getHistory() { return oldHistory(); },
+      async send() { throw new Error("send"); },
+      async recover() { throw new Error("recover"); },
+    },
+  });
+  const rootUser = process.getuid() === 0;
+  check("N1 a missing uid hook follows the real user", rootUser
+    ? code === 0 && !has(lines, "must run as root") && has(lines, "REFUND_DRY_RUN_OK (no quote)")
+    : code === 2 && has(lines, "REFUND_REFUSED: must run as root") && !existsSync(join(dir, "refund")));
+}
+
+{
+  const info = await plan();
+  const root = mkdtempSync(join(tmpdir(), "kore-n2-root-"));
+  writeFileSync(join(root, "run.mjs"), "// root\n");
+  const linkParent = mkdtempSync(join(tmpdir(), "kore-n2-link-"));
+  const link = join(linkParent, "root");
+  symlinkSync(root, link);
+  const elsewhere = mkdtempSync(join(tmpdir(), "kore-n2-else-"));
+  unlinkSync(join(root, "run.mjs"));
+  const cwdLink = await run({
+    argv: ["--no-quote"],
+    procRootDir: link,
+    processes: () => [{ argv: ["node", "run.mjs"], cwd: root }],
+  });
+  check("N2 a cwd through a symlink is the runner", cwdLink.code === 2 && has(cwdLink.lines, "REFUND_REFUSED: run.mjs is running"));
+  writeFileSync(join(root, "run.mjs"), "// root\n");
+  const argvLink = await run({
+    argv: ["--no-quote"],
+    procRootDir: root,
+    processes: () => [{ argv: ["node", join(link, "run.mjs")], cwd: elsewhere }],
+  });
+  check("N2 an argv path through a symlink is the runner", argvLink.code === 2 && has(argvLink.lines, "REFUND_REFUSED: run.mjs is running"));
+  const sibling = `${root}2`;
+  mkdirSync(sibling);
+  writeFileSync(join(sibling, "run.mjs"), "// sibling\n");
+  const beside = await run({
+    argv: ["--no-quote"],
+    procRootDir: root,
+    processes: () => [{ argv: ["node", join(sibling, "run.mjs")], cwd: "/" }],
+  });
+  check("N2 a sibling root is not the runner", beside.code === 0 && !has(beside.lines, "run.mjs is running") && !has(beside.lines, "process list unreadable"));
+  const outsideDir = mkdtempSync(join(tmpdir(), "kore-n2-out-"));
+  writeFileSync(join(outsideDir, "run.mjs"), "// out\n");
+  const outside = await run({
+    argv: ["--no-quote"],
+    procRootDir: root,
+    processes: () => [{ argv: ["node", join(outsideDir, "run.mjs")], cwd: outsideDir }],
+  });
+  check("N2 a run.mjs outside the real root is not the runner", outside.code === 0 && !has(outside.lines, "run.mjs is running"));
+  const missingRoot = join(tmpdir(), `kore-n2-missing-${process.pid}`);
+  rmSync(missingRoot, { recursive: true, force: true });
+  const literal = await run({
+    argv: ["--no-quote"],
+    procRootDir: missingRoot,
+    processes: () => [{ argv: ["node", join(outsideDir, "run.mjs")], cwd: missingRoot }],
+  });
+  check("N2 a literal cwd match is the runner even when argv is outside", literal.code === 2 && has(literal.lines, "REFUND_REFUSED: run.mjs is running"));
+  const literalMissing = await run({
+    argv: ["--no-quote"],
+    procRootDir: missingRoot,
+    processes: () => [{ argv: ["node", "run.mjs"], cwd: missingRoot }],
+  });
+  check("N2 a literal match still counts when realpath of the root throws", literalMissing.code === 2 && has(literalMissing.lines, "REFUND_REFUSED: run.mjs is running") && !has(literalMissing.lines, "process list unreadable"));
+  const unresolved = await run({
+    argv: ["--no-quote"],
+    procRootDir: root,
+    processes: () => [{ argv: ["node", "/no/such/run.mjs"], cwd: "/" }],
+  });
+  check("N2 an unresolvable argv is refused without the path", unresolved.code === 2 && has(unresolved.lines, "REFUND_REFUSED: process list unreadable") && quiet(unresolved.lines) && unresolved.counts.quotes === 0);
+  let seen = 0;
+  const late = await run({
+    argv: sendArgv(info),
+    procRootDir: root,
+    processes: () => {
+      seen += 1;
+      if (seen === 1) return [];
+      return [{ argv: ["node", "/no/such/run.mjs"], cwd: "/" }];
+    },
+  });
+  check("N2 an unresolvable argv on the recheck removes STOP", late.code === 2 && has(late.lines, "REFUND_REFUSED: process list unreadable") && quiet(late.lines) && !existsSync(join(late.dir, "STOP")) && !existsSync(join(late.dir, "refund", "intent.json")) && late.counts.publish === 0);
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  async function landed() {
+    return run({ argv: sendArgv(info), onPublish: publishLanded(rawTotal) });
+  }
+  async function sealed(body, label, line) {
+    const ran = await landed();
+    writeFileSync(join(ran.dir, "refund", "done.json"), body);
+    const shot = snapshot(ran.dir);
+    const verified = await ran.again(["--verify"]);
+    check(label, verified.code === 3 && verified.lines.includes(line) && snapshot(ran.dir) === shot && quiet(verified.lines));
+  }
+  await sealed(`${JSON.stringify({ block: "REFUNDHASH", total: "1", plan: "p", books: "unconfirmed" })}\n`, "N3 unconfirmed done.json is not finished", "REFUND_VERIFY: LANDED books written, not confirmed");
+  await sealed(`${JSON.stringify({ block: "REFUNDHASH", total: "1", plan: "p" })}\n`, "N3 a missing books field is invalid", "REFUND_VERIFY: UNKNOWN done.json books field missing or invalid");
+  await sealed(`${JSON.stringify({ block: "REFUNDHASH", books: "later" })}\n`, "N3 any other books value is invalid", "REFUND_VERIFY: UNKNOWN done.json books field missing or invalid");
+  await sealed("{\n", "N3 invalid done.json is unreadable", "REFUND_VERIFY: UNKNOWN done.json unreadable");
+  await sealed("[]\n", "N3 a non-object done.json is unreadable", "REFUND_VERIFY: UNKNOWN done.json unreadable");
+  const ran = await landed();
+  const shot = snapshot(ran.dir);
+  const denied = await ran.again(["--verify"], {
+    fs: {
+      readFileSync(path, ...args) {
+        if (String(path).endsWith("/done.json")) throw namedFault("DoneRead");
+        return readFileSync(path, ...args);
+      },
+    },
+  });
+  check("N3 an unreadable done.json makes no writes", denied.code === 3 && denied.lines.includes("REFUND_VERIFY: UNKNOWN done.json unreadable") && snapshot(ran.dir) === shot && quiet(denied.lines));
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const reference = await run({ argv: sendArgv(info), onPublish: publishLanded(rawTotal) });
+  const adjustedBytes = readFileSync(reference.booksPath);
+  const before = [
+    ["stat", "BOOKS_MISMATCH", "mismatch", false],
+    ["copy", "BOOKS_MISMATCH", "mismatch", false],
+    ["chmod", "BOOKS_MISMATCH", "mismatch", false],
+    ["backup-fsync", "BOOKS_MISMATCH", "mismatch", false],
+    ["open", "BOOKS_MISMATCH", "mismatch", false],
+    ["write", "BOOKS_MISMATCH", "mismatch", false],
+    ["fchown", "BOOKS_MISMATCH", "mismatch", false],
+    ["fchmod", "BOOKS_MISMATCH", "mismatch", false],
+    ["fsync", "BOOKS_MISMATCH", "mismatch", false],
+    ["close", "BOOKS_MISMATCH", "mismatch", false],
+    ["rename", "BOOKS_MISMATCH", "mismatch", false],
+    ["dir-fsync", "BOOKS_UNCONFIRMED", "unconfirmed", true],
+    ["confirm-stat", "BOOKS_UNCONFIRMED", "unconfirmed", true],
+    ["confirm-mode", "BOOKS_UNCONFIRMED", "unconfirmed", true],
+    ["sticky", "BOOKS_UNCONFIRMED", "unconfirmed", true],
+  ];
+  for (const [point, line, books, adjusted] of before) {
+    const ran = await run({ argv: sendArgv(info), fs: faultFs(point), onPublish: publishLanded(rawTotal) });
+    const done = JSON.parse(readFileSync(join(ran.dir, "refund", "done.json"), "utf8"));
+    const verifyLine = books === "mismatch"
+      ? "REFUND_VERIFY: LANDED books not adjusted"
+      : "REFUND_VERIFY: LANDED books written, not confirmed";
+    const shot = snapshot(ran.dir);
+    const verified = await ran.again(["--verify"]);
+    const booksNow = readFileSync(ran.booksPath);
+    const expectBooks = adjusted ? adjustedBytes : ran.booksAtStart;
+    check(`N4 ${point} seals ${books}`, ran.code === 3 && ran.lines.includes(line) && !ran.lines.includes(books === "mismatch" ? "BOOKS_UNCONFIRMED" : "BOOKS_MISMATCH") && done.books === books && booksNow.equals(expectBooks) && !existsSync(join(ran.dir, "books.json.tmp")) && readdirSync(join(ran.dir, "refund")).some((name) => name.startsWith("receipt-")) && quiet(ran.lines) && verified.code === 3 && verified.lines.includes(verifyLine) && snapshot(ran.dir) === shot);
+  }
+  const dropped = await run({ argv: sendArgv(info), fs: faultFs("done"), onPublish: publishLanded(rawTotal) });
+  const afterSend = readFileSync(dropped.booksPath);
+  const doneAfterSend = existsSync(join(dropped.dir, "refund", "done.json"));
+  const verified = await dropped.again(["--verify"], { fs: undefined });
+  check("N4 a done.json write failure does not apply the books twice", dropped.code === 3 && has(dropped.lines, "REFUND_HOLD: unexpected DoneOpen") && !doneAfterSend && afterSend.equals(adjustedBytes) && verified.code === 3 && (has(verified.lines, "BOOKS_MISMATCH") || has(verified.lines, "UNKNOWN")) && readFileSync(dropped.booksPath).equals(afterSend) && quiet(dropped.lines));
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  function ownerFs(order, mode) {
+    let booksFd = -1;
+    return {
+      openSync(path, flags, modeArg) {
+        const fd = openSync(path, flags, modeArg);
+        if (String(path).endsWith("/books.json.tmp")) booksFd = fd;
+        order.push({ op: "open", path: String(path), fd });
+        return fd;
+      },
+      statSync(path, ...args) {
+        const st = statSync(path, ...args);
+        if (String(path).endsWith("/books.json")) return { uid: 1001, gid: 1001, mode };
+        return st;
+      },
+      fchownSync(fd, uid, gid) {
+        order.push({ op: "fchown", fd, uid, gid });
+      },
+      fchmodSync(fd, modeArg) {
+        order.push({ op: "fchmod", fd, mode: modeArg });
+      },
+      fsyncSync(fd) {
+        order.push({ op: "fsync", fd });
+        return fsyncSync(fd);
+      },
+      renameSync(from, to) {
+        order.push({ op: "rename", from: String(from), to: String(to) });
+        return renameSync(from, to);
+      },
+      booksFd: () => booksFd,
+    };
+  }
+  for (const [mode, expectMode, label] of [[0o100640, 0o640, "0640"], [0o104640, 0o4640, "setuid"]]) {
+    const order = [];
+    const fs = ownerFs(order, mode);
+    const ran = await run({ argv: sendArgv(info), fs, onPublish: publishLanded(rawTotal) });
+    const booksIndex = order.findIndex((event) => event.op === "open" && event.path.endsWith("/books.json.tmp"));
+    const booksEvents = booksIndex < 0 ? [] : eventsAfterOpen(order, booksIndex);
+    const chown = booksEvents.find((event) => event.op === "fchown");
+    const chmod = booksEvents.find((event) => event.op === "fchmod");
+    const sync = booksEvents.find((event) => event.op === "fsync");
+    const chownAt = booksEvents.indexOf(chown);
+    const chmodAt = booksEvents.indexOf(chmod);
+    const syncAt = booksEvents.indexOf(sync);
+    const renameAt = order.findIndex((event) => event.op === "rename" && event.to.endsWith("/books.json"));
+    const syncInOrder = order.indexOf(sync);
+    check(`N5 fchown and fchmod ${label} precede fsync`, ran.code === 0 && has(ran.lines, "BOOKS_OK") && chown?.uid === 1001 && chown?.gid === 1001 && chmod?.mode === expectMode && chownAt >= 0 && chownAt < chmodAt && chmodAt < syncAt && syncInOrder >= 0 && syncInOrder < renameAt);
+  }
+  const kept = await run({
+    argv: sendArgv(info),
+    onPublish: (_b, _o, ctx) => {
+      chmodSync(join(ctx.dir, "books.json"), 0o644);
+      return publishLanded(rawTotal)(_b, _o, ctx);
+    },
+  });
+  const keptStat = statSync(kept.booksPath);
+  check("N5 mode 0644 stays 0644 for this user", kept.code === 0 && (keptStat.mode & 0o777) === 0o644 && keptStat.uid === process.getuid() && keptStat.gid === process.getgid());
+  const modes = [];
+  for (const name of readdirSync(join(kept.dir, "refund"))) modes.push([name, statSync(join(kept.dir, "refund", name)).mode & 0o777]);
+  const backup = readdirSync(kept.dir).find((name) => name.startsWith("books.json.pre-refund-"));
+  modes.push([backup, statSync(join(kept.dir, backup)).mode & 0o777]);
+  check("N5 done receipt intent log and backup are mode 0600", modes.every(([, mode]) => mode === 0o600) && modes.some(([name]) => name === "done.json") && modes.some(([name]) => name === "intent.json") && modes.some(([name]) => name.startsWith("receipt-")) && modes.some(([name]) => name.startsWith("refund-")) && modes.some(([name]) => name.startsWith("books.json.pre-refund-")));
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const capLine = rawTotal + REFUND_FEE_CAP + RESERVE;
+  const quoteLine = rawTotal + FEE + RESERVE;
+  let dir = "";
+  const ran = await run({
+    argv: sendArgv(info),
+    onQuote: (found) => { dir = found; },
+    onBalance: (n, live) => {
+      if (n < 2) return live.balance;
+      const take = (live.balance - capLine) + 1n;
+      const body = JSON.parse(readFileSync(join(dir, "books.json"), "utf8"));
+      const operator = BigInt(body.operator);
+      const fromOperator = operator < take ? operator : take;
+      body.operator = (operator - fromOperator).toString();
+      body.reserve = (BigInt(body.reserve) - (take - fromOperator)).toString();
+      writeFileSync(join(dir, "books.json"), JSON.stringify(body));
+      return live.balance - take;
+    },
+  });
+  const next = ran.live.balance - ((ran.live.balance - capLine) + 1n);
+  check("N6 the recheck uses the fee cap not the quote", next >= quoteLine && next < capLine && ran.code === 2 && ran.lines.includes("REFUND_REFUSED: balance is short of the refund") && !existsSync(join(ran.dir, "STOP")) && !existsSync(join(ran.dir, "refund", "intent.json")) && ran.counts.publish === 0 && ran.counts.quotes === 1);
+}
+
+{
+  const info = await plan();
+  const rawTotal = BigInt(info.total.replace(".", ""));
+  const order = [];
+  let original;
+  const sent = await run({
+    argv: sendArgv(info),
+    fs: trackIo(order),
+    onPublish: (_b, _o, ctx) => {
+      original = statSync(join(ctx.dir, "books.json"));
+      return publishLanded(rawTotal)(_b, _o, ctx);
+    },
+  });
+  const once = readFileSync(sent.booksPath);
+  const first = await sent.again(["--verify"]);
+  const second = await sent.again(["--verify"]);
+  function sameOwner(path) {
+    const st = statSync(path);
+    return st.uid === original.uid && st.gid === original.gid && (st.mode & 0o7777) === (original.mode & 0o7777);
+  }
+  const writes = order.filter((event) => event.op === "rename" && event.to.endsWith("/books.json")).length;
+  const started = readFileSync(FIXTURE);
+  check("N multi-tick landed verifies are finished and the books are written once", sent.code === 0 && has(sent.lines, "REFUND_LANDED") && has(sent.lines, "BOOKS_OK") && first.code === 0 && first.lines.includes("REFUND_VERIFY: LANDED (already finished)") && second.code === 0 && second.lines.includes("REFUND_VERIFY: LANDED (already finished)") && writes === 1 && readFileSync(sent.booksPath).equals(once) && !once.equals(started) && sameOwner(sent.booksPath));
+
+  const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  const shift = BigInt(raw.operator) + RAW;
+  raw.operator = (-RAW).toString();
+  raw.parked = (BigInt(raw.parked ?? "0") + shift).toString();
+  const text = JSON.stringify(raw);
+  const mismatch = await run({ argv: sendArgv(info), booksText: text, onPublish: publishLanded(rawTotal) });
+  const mismatchVerify = await mismatch.again(["--verify"]);
+  const mismatchAgain = await mismatch.again(["--verify"]);
+  check("N multi-tick books mismatch stays unadjusted", mismatch.code === 3 && has(mismatch.lines, "BOOKS_MISMATCH") && mismatchVerify.code === 3 && mismatchVerify.lines.includes("REFUND_VERIFY: LANDED books not adjusted") && mismatchAgain.code === 3 && mismatchAgain.lines.includes("REFUND_VERIFY: LANDED books not adjusted") && readFileSync(mismatch.booksPath, "utf8") === text);
+
+  const faulted = await run({ argv: sendArgv(info), fs: faultFs("fchown"), onPublish: publishLanded(rawTotal) });
+  const faultVerify = await faulted.again(["--verify"]);
+  const faultAgain = await faulted.again(["--verify"]);
+  check("N multi-tick a before-rename fault stays a mismatch", faulted.code === 3 && has(faulted.lines, "BOOKS_MISMATCH") && faultVerify.code === 3 && faultVerify.lines.includes("REFUND_VERIFY: LANDED books not adjusted") && faultAgain.code === 3 && faultAgain.lines.includes("REFUND_VERIFY: LANDED books not adjusted") && readFileSync(faulted.booksPath).equals(faulted.booksAtStart) && !existsSync(join(faulted.dir, "books.json.tmp")));
+
+  const late = await run({ argv: sendArgv(info), fs: faultFs("confirm-mode"), onPublish: publishLanded(rawTotal) });
+  const lateBytes = readFileSync(late.booksPath);
+  const lateVerify = await late.again(["--verify"]);
+  const lateAgain = await late.again(["--verify"]);
+  check("N multi-tick an after-rename fault stays unconfirmed", late.code === 3 && has(late.lines, "BOOKS_UNCONFIRMED") && lateVerify.code === 3 && lateVerify.lines.includes("REFUND_VERIFY: LANDED books written, not confirmed") && lateAgain.code === 3 && lateAgain.lines.includes("REFUND_VERIFY: LANDED books written, not confirmed") && readFileSync(late.booksPath).equals(lateBytes));
+
+  const old = await run({ argv: sendArgv(info), onPublish: publishLanded(rawTotal) });
+  const oldDone = JSON.parse(readFileSync(join(old.dir, "refund", "done.json"), "utf8"));
+  delete oldDone.books;
+  writeFileSync(join(old.dir, "refund", "done.json"), `${JSON.stringify(oldDone)}\n`);
+  const oldShot = snapshot(old.dir);
+  const oldVerify = await old.again(["--verify"]);
+  const oldAgain = await old.again(["--verify"]);
+  check("N multi-tick old done.json stays invalid", oldVerify.code === 3 && oldVerify.lines.includes("REFUND_VERIFY: UNKNOWN done.json books field missing or invalid") && oldAgain.code === 3 && oldAgain.lines.includes("REFUND_VERIFY: UNKNOWN done.json books field missing or invalid") && snapshot(old.dir) === oldShot);
+
+  const broken = await run({ argv: sendArgv(info), onPublish: publishLanded(rawTotal) });
+  writeFileSync(join(broken.dir, "refund", "done.json"), "{\n");
+  const brokenShot = snapshot(broken.dir);
+  const brokenVerify = await broken.again(["--verify"]);
+  const brokenAgain = await broken.again(["--verify"]);
+  check("N multi-tick unreadable done.json stays unreadable", brokenVerify.code === 3 && brokenVerify.lines.includes("REFUND_VERIFY: UNKNOWN done.json unreadable") && brokenAgain.code === 3 && brokenAgain.lines.includes("REFUND_VERIFY: UNKNOWN done.json unreadable") && snapshot(broken.dir) === brokenShot);
 }
 
 console.log(`refund checks ${passed}`);
