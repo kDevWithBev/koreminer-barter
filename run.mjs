@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, judgeQuote, kta, minPublishGapMs, pace } from "./pace.mjs";
+import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace } from "./pace.mjs";
 import { RESERVE, due } from "./share.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
 import { pullNew, readStaple } from "./chain.mjs";
@@ -380,6 +380,7 @@ export async function runShaft({
     }
   }
 
+  console.log(configLine());
   console.log("Runner up. Pace follows fuel. Ceiling 17/s. Reserve", kta(RESERVE), "KTA.", sendArmed() ? "KORE send is armed." : "KORE send is off.");
   console.log("Dust sink:", sink);
   console.log("KORE:", koreStart.toString());

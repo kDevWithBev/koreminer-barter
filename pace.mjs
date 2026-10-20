@@ -40,10 +40,33 @@ export function choosePack({ spendable, feePerTx = FEE_PER_TX, maxPack = BLOCK_T
   return Number(affordable);
 }
 
+function readCap() {
+  const text = process.env.FEE_CAP_PER_BUNDLE_KTA;
+  const fallback = fromKta("0.05");
+  const limit = fromKta("0.5");
+  if (text === undefined || text === "") return { value: fallback, from: null };
+  try {
+    const cap = fromKta(text);
+    if (!(cap > 0n)) return { value: fallback, from: null };
+    if (cap > limit) return { value: limit, from: cap };
+    return { value: cap, from: null };
+  } catch {
+    return { value: fallback, from: null };
+  }
+}
+
+function readRate() {
+  const text = process.env.MAX_BLOCKS_PER_HOUR;
+  if (text === undefined || text === "") return { value: 60, from: null };
+  const raw = Number(text);
+  if (!Number.isFinite(raw) || raw < 1) return { value: 60, from: null };
+  const n = Math.floor(raw);
+  if (n > 600) return { value: 600, from: n };
+  return { value: n, from: null };
+}
+
 export function maxBlocksPerHour() {
-  const raw = Number(process.env.MAX_BLOCKS_PER_HOUR ?? "60");
-  if (!Number.isFinite(raw) || raw < 1) return 60;
-  return Math.floor(raw);
+  return readRate().value;
 }
 
 export function minPublishGapMs(limit = maxBlocksPerHour()) {
@@ -51,13 +74,18 @@ export function minPublishGapMs(limit = maxBlocksPerHour()) {
 }
 
 export function bundleCap() {
-  const text = process.env.FEE_CAP_PER_BUNDLE_KTA;
-  const raw = text === undefined || text === "" ? "0.05" : text;
-  try {
-    const cap = fromKta(raw);
-    if (cap > 0n) return cap;
-  } catch { /* fall through */ }
-  return fromKta("0.05");
+  return readCap().value;
+}
+
+export function configLine() {
+  const cap = readCap();
+  const rate = readRate();
+  const bits = [];
+  if (cap.from !== null) bits.push(`${kta(cap.from)} KTA`);
+  if (rate.from !== null) bits.push(`${rate.from}/hour`);
+  let line = `Config fee cap ${kta(cap.value)} KTA. Max ${rate.value} blocks an hour.`;
+  if (bits.length) line += ` (clamped from ${bits.join(", ")})`;
+  return line;
 }
 
 export class FeeOverCap extends Error {
