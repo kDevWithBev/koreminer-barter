@@ -195,6 +195,18 @@ const EXPECT = {
   aabrmmct: "4.750445",
 };
 
+function sinkOperator(dir) {
+  // Batch route: W-operator refuses a negative operator before publish, so the
+  // post-landing H4 guard is reached by moving operator into parked mid-publish.
+  const body = JSON.parse(readFileSync(join(dir, "books.json"), "utf8"));
+  const move = BigInt(body.operator) + 2000n * RAW;
+  body.operator = (BigInt(body.operator) - move).toString();
+  body.parked = (BigInt(body.parked ?? "0") + move).toString();
+  const text = JSON.stringify(body);
+  writeFileSync(join(dir, "books.json"), text);
+  return text;
+}
+
 let passed = 0;
 function check(name, ok) {
   if (!ok) throw new Error(name);
@@ -401,7 +413,9 @@ async function run(opts = {}) {
   if (typeof opts.procRootDir === "string") baseDeps.procRootDir = opts.procRootDir;
   if (opts.drainSha !== undefined) baseDeps.drainSha = opts.drainSha;
   if (opts.plannerFault) baseDeps.plannerFault = opts.plannerFault;
-  async function go(argv, extra = {}) {
+  async function go(argvIn, extra = {}) {
+    // Batch route: these legacy checks drive the reviewed single block (--batch all).
+    const argv = argvIn.includes("--batch") ? argvIn : [...argvIn, "--batch", "all"];
     const lines = [];
     mainCalls += 1;
     const callLabel = callerOfGo();
@@ -725,6 +739,15 @@ check("T9 balance one raw above is refused", (await run({ argv: ["--no-quote"], 
     const refundDir = join(landed.dir, "refund");
     for (const name of readdirSync(refundDir)) {
       const full = join(refundDir, name);
+      if (statSync(full).isDirectory()) {
+        // Batch route: refund/wallets holds one record per paid wallet.
+        check(`T14 ${name} dir is mode 0700`, (statSync(full).mode & 0o777) === 0o700);
+        for (const inner of readdirSync(full)) {
+          blob.push(readFileSync(join(full, inner), "utf8"));
+          check(`T14 ${name}/${inner.slice(0, 14)} is mode 0600`, (statSync(join(full, inner)).mode & 0o777) === 0o600);
+        }
+        continue;
+      }
       blob.push(readFileSync(full, "utf8"));
       check(`T14 ${name} is mode 0600`, (statSync(full).mode & 0o777) === 0o600);
     }
@@ -1464,9 +1487,26 @@ check("verify with no intent exits quietly", none.code === 0 && has(none.lines, 
       return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
     },
   });
-  const operatorDone = JSON.parse(readFileSync(join(operator.dir, "refund", "done.json"), "utf8"));
-  const operatorReceipt = readdirSync(join(operator.dir, "refund")).some((name) => name.startsWith("receipt-"));
-  check("H4 a negative operator is a books mismatch", operator.code === 3 && has(operator.lines, "BOOKS_MISMATCH") && has(operator.lines, "REFUND_LANDED REFUNDHASH") && !has(operator.lines, "BOOKS_OK") && operatorDone.books === "mismatch" && operatorReceipt && readFileSync(operator.booksPath, "utf8") === text && !readdirSync(operator.dir).some((name) => name.startsWith("books.json.pre-refund-")));
+  // Batch route: W-operator now refuses this before any publish.
+  check("H4 a negative operator is refused before publish (W-operator)", operator.code === 2 && has(operator.lines, "REFUND_REFUSED: operator would go negative") && operator.counts.publish === 0 && operator.counts.quotes === 1 && readFileSync(operator.booksPath, "utf8") === text);
+  let opTampered = "";
+  const operatorLate = await run({
+    argv: sendArgv(info),
+    onPublish: (_b, _o, ctx) => {
+      ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
+      ctx.live.balance -= rawTotal + FEE;
+      const body = JSON.parse(readFileSync(join(ctx.dir, "books.json"), "utf8"));
+      const move = BigInt(body.operator) + 2000n * RAW;
+      body.operator = (BigInt(body.operator) - move).toString();
+      body.parked = (BigInt(body.parked ?? "0") + move).toString();
+      opTampered = JSON.stringify(body);
+      writeFileSync(join(ctx.dir, "books.json"), opTampered);
+      return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
+    },
+  });
+  const operatorDone = JSON.parse(readFileSync(join(operatorLate.dir, "refund", "done.json"), "utf8"));
+  const operatorReceipt = readdirSync(join(operatorLate.dir, "refund")).some((name) => name.startsWith("receipt-"));
+  check("H4 a negative operator is a books mismatch", operatorLate.code === 3 && has(operatorLate.lines, "BOOKS_MISMATCH") && has(operatorLate.lines, "REFUND_LANDED REFUNDHASH") && !has(operatorLate.lines, "BOOKS_OK") && operatorDone.books === "mismatch" && operatorReceipt && readFileSync(operatorLate.booksPath, "utf8") === opTampered && !readdirSync(operatorLate.dir).some((name) => name.startsWith("books.json.pre-refund-")));
   let tampered = "";
   const reserve = await run({
     argv: sendArgv(info),
@@ -1613,18 +1653,14 @@ function eventsAfterOpen(order, index) {
   check("H7i books.json keeps mode 0640", booksMode?.mode === 0o640 && finalMode === 0o640 && !chmodBooks);
   check("H7ii done.json is written once with the final books value", doneOpens.length === 1 && doneIndex > booksRename && doneWrite?.body.includes('"books": "adjusted"'));
 
-  const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
-  const shift = BigInt(raw.operator) + RAW;
-  raw.operator = (-RAW).toString();
-  raw.parked = (BigInt(raw.parked ?? "0") + shift).toString();
-  const text = JSON.stringify(raw);
+  let text = "";
   const mismatchOrder = [];
   const mismatch = await run({
     argv: sendArgv(info),
-    booksText: text,
     fs: trackIo(mismatchOrder),
     onPublish: (_b, _o, ctx) => {
       chmodSync(join(ctx.dir, "books.json"), 0o640);
+      text = sinkOperator(ctx.dir);
       ctx.live.history = [staple(ctx.blockHash, FEE), ...oldHistory()];
       ctx.live.balance -= rawTotal + FEE;
       return { from: "direct", voteStaple: { blocks: [{ hash: hashOf(ctx.blockHash) }] } };
@@ -2118,7 +2154,16 @@ function faultFs(point) {
   const keptStat = statSync(kept.booksPath);
   check("N5 mode 0644 stays 0644 for this user", kept.code === 0 && (keptStat.mode & 0o777) === 0o644 && keptStat.uid === process.getuid() && keptStat.gid === process.getgid());
   const modes = [];
-  for (const name of readdirSync(join(kept.dir, "refund"))) modes.push([name, statSync(join(kept.dir, "refund", name)).mode & 0o777]);
+  for (const name of readdirSync(join(kept.dir, "refund"))) {
+    const full = join(kept.dir, "refund", name);
+    // Batch route: refund/wallets is a 0700 dir of 0600 wallet records.
+    if (statSync(full).isDirectory()) {
+      modes.push([name, (statSync(full).mode & 0o777) === 0o700 ? 0o600 : -1]);
+      for (const inner of readdirSync(full)) modes.push([`${name}/${inner}`, statSync(join(full, inner)).mode & 0o777]);
+      continue;
+    }
+    modes.push([name, statSync(full).mode & 0o777]);
+  }
   const backup = readdirSync(kept.dir).find((name) => name.startsWith("books.json.pre-refund-"));
   modes.push([backup, statSync(join(kept.dir, backup)).mode & 0o777]);
   check("N5 done receipt intent log and backup are mode 0600", modes.every(([, mode]) => mode === 0o600) && modes.some(([name]) => name === "done.json") && modes.some(([name]) => name === "intent.json") && modes.some(([name]) => name.startsWith("receipt-")) && modes.some(([name]) => name.startsWith("refund-")) && modes.some(([name]) => name.startsWith("books.json.pre-refund-")));
@@ -2187,12 +2232,9 @@ function faultFs(point) {
   const stopAfter = statSync(stopPath);
   check("N multi-tick a kept STOP blocks a second send", blocked.code === 2 && blocked.lines.includes("REFUND_REFUSED: STOP is present") && sent.counts.quotes === quotesAfter && sent.counts.publish === publishAfter && stopBytes.equals(readFileSync(stopPath)) && stopBytes.equals(Buffer.from("refund in progress\n")) && stopAfter.mtimeMs === stopBefore.mtimeMs && stopAfter.ino === stopBefore.ino && (stopAfter.mode & 0o777) === 0o600);
 
-  const raw = JSON.parse(readFileSync(FIXTURE, "utf8"));
-  const shift = BigInt(raw.operator) + RAW;
-  raw.operator = (-RAW).toString();
-  raw.parked = (BigInt(raw.parked ?? "0") + shift).toString();
-  const text = JSON.stringify(raw);
-  const mismatch = await run({ argv: sendArgv(info), booksText: text, onPublish: publishLanded(rawTotal) });
+  let text = "";
+  const landedOnce = publishLanded(rawTotal);
+  const mismatch = await run({ argv: sendArgv(info), onPublish: (b, o, ctx) => { text = sinkOperator(ctx.dir); return landedOnce(b, o, ctx); } });
   const mismatchVerify = await mismatch.again(["--verify"]);
   const mismatchAgain = await mismatch.again(["--verify"]);
   check("N multi-tick books mismatch stays unadjusted", mismatch.code === 3 && has(mismatch.lines, "BOOKS_MISMATCH") && mismatchVerify.code === 3 && mismatchVerify.lines.includes("REFUND_VERIFY: LANDED books not adjusted") && mismatchAgain.code === 3 && mismatchAgain.lines.includes("REFUND_VERIFY: LANDED books not adjusted") && readFileSync(mismatch.booksPath, "utf8") === text);

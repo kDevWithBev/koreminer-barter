@@ -76,7 +76,7 @@ async function show(heading, dir, client, argv) {
   const lines = [];
   const code = await main({
     dir,
-    argv,
+    argv: [...argv, "--batch", "all"],
     client,
     base: BASE,
     baseText: "kta",
@@ -143,7 +143,7 @@ const e = stage();
 e.live.onPublish = () => ({ from: "direct", voteStaple: { blocks: [{ hash: hashOf(e.live.hash) }] } });
 const missed = await main({
   dir: e.dir,
-  argv: ["--send", "--confirm-total", total, "--confirm-count", count, "--confirm-plan", plan],
+  argv: ["--send", "--confirm-total", total, "--confirm-count", count, "--confirm-plan", plan, "--batch", "all"],
   client: e.client,
   base: BASE,
   baseText: "kta",
@@ -176,7 +176,7 @@ f.live.onPublish = () => {
 };
 const finished = await main({
   dir: f.dir,
-  argv: ["--send", "--confirm-total", total, "--confirm-count", count, "--confirm-plan", plan],
+  argv: ["--send", "--confirm-total", total, "--confirm-count", count, "--confirm-plan", plan, "--batch", "all"],
   client: f.client,
   base: BASE,
   baseText: "kta",
@@ -191,6 +191,7 @@ const finished = await main({
 if (finished !== 0) throw new Error("f send");
 const backup = readdirSync(f.dir).find((name) => name.startsWith("books.json.pre-refund-"));
 rmSync(join(f.dir, "refund", "done.json"));
+for (const name of readdirSync(join(f.dir, "refund"))) if (name.startsWith("receipt-")) rmSync(join(f.dir, "refund", name));
 copyFileSync(join(f.dir, backup), join(f.dir, "books.json"));
 const resume = await show("(f) --verify finishing", f.dir, f.client, ["--verify"]);
 if (resume.code !== 0) throw new Error("f");

@@ -1,5 +1,9 @@
 // Refund one batch of Koreminer KTA from the shaft.
 // Dry run is the default. This file never calls client.send or client.recover.
+// Batches (canary route, Trey via Bob Oct 21): --batch 1 pays only the canary
+// wallet, --batch 2 pays every planned wallet that has no refund record, and
+// --batch all is the reviewed single block. A wallet record is written with an
+// exclusive create before any publish, so a wallet is never paid twice.
 // Test hooks (drainSha, plannerFault, drainPath, procRoot, procRootDir, uid) are read only from
 // the deps object passed to main(). No environment variable and no command-line
 // flag can set them. A custom drainPath is still checked against DRAIN_SHA256
@@ -60,6 +64,9 @@ const MEMO = "koreminer-refund-2026-10";
 const CUTOFF = Date.parse("2026-10-19T21:55:00.000Z");
 const MAX_PAGES = 300;
 const ROOT = "/opt/koreminer";
+const CANARY = "keeta_aabrmmctfikuanrdtlimnedov5bcshc2hmyrjlvqy5h2cvfwntlrkp6cquzakja";
+const RECORD_NAME = /^keeta_[a-z0-9]+\.json$/;
+if (!PINNED_SET.has(CANARY)) throw new Error("canary is not a pinned drain wallet");
 
 function accountKey(value) {
   if (value === undefined || value === null || value === "") return "";
@@ -135,6 +142,7 @@ function flag(argv, name) {
 
 function modeOf(argv) {
   if (argv.includes("--verify")) return "verify";
+  if (argv.includes("--check")) return "check";
   if (argv.includes("--no-quote")) return "no-quote";
   if (argv.includes("--send")) return "send";
   return "dry-run";
@@ -194,6 +202,89 @@ function ensureRefundDir(io, dir) {
   io.mkdirSync(path, { recursive: true, mode: 0o700 });
   io.chmodSync(path, 0o700); // GUARD:file-modes
   return path;
+}
+
+function batchOf(argv) {
+  const value = flag(argv, "--batch");
+  return value === "1" || value === "2" || value === "all" ? value : "";
+}
+
+function batchDirOf(dir, batch) {
+  return batch === "all" ? `${dir}/refund` : `${dir}/refund/b${batch}`;
+}
+
+function ensureBatchDir(io, dir, batch) {
+  const refundDir = ensureRefundDir(io, dir);
+  if (batch === "all" || batch === undefined) return refundDir;
+  const path = `${refundDir}/b${batch}`;
+  io.mkdirSync(path, { recursive: true, mode: 0o700 });
+  io.chmodSync(path, 0o700);
+  return path;
+}
+
+function exclusiveWrite(io, path, body) {
+  const fd = io.openSync(path, "wx", 0o600);
+  try {
+    io.writeFileSync(fd, body);
+    io.fchmodSync(fd, 0o600);
+    io.fsyncSync(fd);
+  } finally { io.closeSync(fd); }
+}
+
+function readJson(io, path) {
+  try {
+    const body = JSON.parse(io.readFileSync(path, "utf8"));
+    return body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+function amountOf(value) {
+  try {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "string" && /^(?:0|[1-9]\d*)$/.test(value)) return BigInt(value);
+    if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+  } catch { /* fall through */ }
+  return -1n;
+}
+
+function readRecords(io, dir) {
+  const path = `${dir}/refund/wallets`;
+  if (!io.existsSync(path)) return { ok: true, keys: [], records: new Map() };
+  let names;
+  try { names = io.readdirSync(path).map(String); }
+  catch { return { ok: false, why: "wallet records are unreadable" }; }
+  const records = new Map();
+  for (const name of names) {
+    if (!RECORD_NAME.test(name)) return { ok: false, why: `unexpected file in refund/wallets: ${name.slice(0, 80)}` };
+    const key = name.slice(0, -5);
+    const body = readJson(io, `${path}/${name}`);
+    if (!body || body.key !== key) return { ok: false, why: `wallet record is unreadable: ${key}` };
+    records.set(key, body);
+  }
+  return { ok: true, keys: [...records.keys()].sort(), records };
+}
+
+function planFromFile(body) {
+  if (!body || !Array.isArray(body.rows) || typeof body.fullPlan !== "string") return null;
+  const rows = [];
+  try {
+    for (const row of body.rows) {
+      if (!row || typeof row.key !== "string") return null;
+      const item = { key: row.key, stake: amountOf(row.stake), weight: String(row.weight), addback: amountOf(row.addback), amount: amountOf(row.amount) };
+      if (item.stake < 0n || item.addback < 0n || item.amount <= 0n || item.stake + item.addback !== item.amount) return null;
+      rows.push(item);
+    }
+  } catch { return null; }
+  if (rows.length === 0 || new Set(rows.map((row) => row.key)).size !== rows.length) return null;
+  if (digestOf(rows) !== body.fullPlan) return null;
+  const pool = amountOf(body.pool);
+  const addbacks = amountOf(body.addbacks);
+  if (pool < 0n || addbacks < 0n) return null;
+  let total = 0n;
+  for (const row of rows) total += row.amount;
+  return { rows, fullPlan: body.fullPlan, pool, addbacks, dust: pool - addbacks, total };
 }
 
 function tokenIsKta(token, base, baseText) {
@@ -356,7 +447,7 @@ async function readHistory(client) {
         const hash = hashText(block?.hash);
         for (const op of block?.operations ?? []) {
           if (op?.type !== 0 && op?.type !== "SEND") continue;
-          if (externalText(op?.external) === MEMO) memos.push({ hash: hash || "unknown" }); // GUARD:S2
+          if (externalText(op?.external) === MEMO) memos.push({ hash: hash || "unknown", to: accountKey(op?.to), amount: amountOf(op?.amount) }); // GUARD:S2
         }
       }
     }
@@ -722,7 +813,7 @@ function sealUnconfirmed(ctx, refundDir) {
 function finishBooks(ctx, verdict) {
   ctx.say(`REFUND_LANDED ${ctx.intent.block}`); // GUARD:H2-landed
   const when = stamp(ctx.now());
-  const refundDir = ensureRefundDir(ctx.io, ctx.dir);
+  const refundDir = ensureBatchDir(ctx.io, ctx.dir, ctx.batch);
   const booksPath = `${ctx.dir}/books.json`;
   const books = loadBooks(ctx.io, ctx.dir);
   const reserveBefore = Object.prototype.hasOwnProperty.call(ctx, "reserveBefore") ? ctx.reserveBefore : books.share.reserve;
@@ -801,6 +892,160 @@ function drainProblem(drain, books) {
   return "";
 }
 
+function sliceOf(full, rows) {
+  let total = 0n;
+  let addbacks = 0n;
+  for (const row of rows) {
+    total += row.amount;
+    addbacks += row.addback;
+  }
+  return { pool: full.pool, addbacks, dust: full.dust, total, rows, digest: digestOf(rows) };
+}
+
+function batchLines(batch, full, preview) {
+  if (batch === "all") return [];
+  const lines = [`FULLPLAN ${full.digest}`, `FULL N ${full.rows.length} TOTAL ${show18(full.total)}`];
+  if (preview) lines.push(`NEXT BATCH 2 N ${preview.rows.length} TOTAL ${show18(preview.total)} PLAN ${preview.digest}`);
+  return lines;
+}
+
+function sameRecipients(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((row, index) => row && right[index] && row.key === right[index].key && String(row.amount) === String(right[index].amount));
+}
+
+function readIntent(io, path) {
+  let bytes;
+  try { bytes = io.readFileSync(path); }
+  catch { return null; }
+  try {
+    const intent = JSON.parse(Buffer.from(bytes).toString("utf8"));
+    if (!intent || typeof intent !== "object" || !Array.isArray(intent.recipients)) return { bytes, intent: null };
+    return { bytes, intent };
+  } catch {
+    return { bytes, intent: null };
+  }
+}
+
+function loadBatchOne(io, R) {
+  const read = readIntent(io, `${R}/b1/intent.json`);
+  const plan = planFromFile(readJson(io, `${R}/plan.json`));
+  return { intent: read.intent, plan, amount: amountOf(read.intent.recipients[0].amount) };
+}
+
+function batchOneProblem(io, R, recs) {
+  const read = readIntent(io, `${R}/b1/intent.json`);
+  if (!read) return "batch 1 has not been sent";
+  const intent = read.intent;
+  if (!intent || intent.batch !== "1" || intent.recipients.length !== 1 || intent.recipients[0]?.key !== CANARY || amountOf(intent.recipients[0]?.amount) <= 0n) {
+    return "batch 1 intent is not the canary"; // GUARD:W-b1-intent
+  }
+  const done = readJson(io, `${R}/b1/done.json`);
+  if (!done || done.books !== "adjusted" || done.block !== intent.block) return "batch 1 books are not adjusted"; // GUARD:W-b1-done
+  const verified = readJson(io, `${R}/b1/verified.json`);
+  if (!verified) return "batch 1 is not verified"; // GUARD:W-b1-verified
+  const plan = planFromFile(readJson(io, `${R}/plan.json`));
+  if (!plan || plan.fullPlan !== intent.fullPlan || !plan.rows.some((row) => row.key === CANARY && row.amount.toString() === intent.recipients[0].amount)) {
+    return "frozen plan does not match"; // GUARD:W-plan
+  }
+  if (verified.batch !== "1" || verified.block !== intent.block || verified.intentSha !== sha256(read.bytes) || verified.fullPlan !== plan.fullPlan || !sameRecipients(verified.recipients, intent.recipients)) {
+    return "batch 1 verify marker does not match"; // GUARD:W-b1-marker
+  }
+  if (recs.keys.length !== 1 || recs.keys[0] !== CANARY) return `wallet records are not batch 1 only (${recs.keys.length})`; // GUARD:W-rec-set
+  const rec = recs.records.get(CANARY);
+  if (rec.batch !== "1" || rec.block !== intent.block || rec.amount !== intent.recipients[0].amount) return "batch 1 wallet record does not match"; // GUARD:W-rec-block
+  return "";
+}
+
+// Read-only on chain, books and runner. Never loads the seed and never builds.
+// Its only write is <batch dir>/verified.json, created once (exclusive).
+async function checkBatch({ deps, dir, batch, bdir, io, say, owned }) {
+  function no(why) {
+    say(`REFUND_BATCH_NOT_VERIFIED: ${why}`);
+    return 3;
+  }
+  const read = readIntent(io, `${bdir}/intent.json`);
+  if (!read) return no("no intent for this batch");
+  const intent = read.intent;
+  if (!intent) return no("intent is unreadable");
+  const done = readJson(io, `${bdir}/done.json`);
+  if (!done || done.books !== "adjusted" || done.block !== intent.block) return no("books are not adjusted for this batch"); // GUARD:C-done
+  const expected = intent.recipients.map((row) => `${intent.block}:${row.key}:${row.amount}`);
+  const touched = intent.recipients.map((row) => row.key);
+  if (batch === "2") {
+    const one = readIntent(io, `${dir}/refund/b1/intent.json`);
+    const v1 = readJson(io, `${dir}/refund/b1/verified.json`);
+    if (!one || !one.intent || !v1 || v1.block !== one.intent.block || v1.intentSha !== sha256(one.bytes)) return no("batch 1 is not verified"); // GUARD:C-b1-first
+    for (const row of one.intent.recipients) {
+      expected.push(`${one.intent.block}:${row.key}:${row.amount}`);
+      touched.push(row.key);
+    }
+  }
+  let names;
+  try { names = io.readdirSync(bdir).map(String).filter((name) => name.startsWith("receipt-")); }
+  catch { names = []; }
+  if (names.length !== 1) return no(`expected exactly one receipt, found ${names.length}`); // GUARD:C-receipt
+  const receipt = readJson(io, `${bdir}/${names[0]}`);
+  if (!receipt || receipt.block !== intent.block) return no("receipt is unreadable or for another block");
+  const { base, baseText } = await resolveChain(deps);
+  const client = deps.client ?? await openReadOnly(deps, owned);
+  let hist;
+  try { hist = await readHistory(client); }
+  catch { hist = { error: true, capped: false, memos: [], staples: [] }; }
+  if (hist.error || hist.capped) return no("history read failed or hit the page cap");
+  let pending;
+  let balance;
+  try {
+    pending = await client.pendingBlock();
+    balance = await chainBalance(client, base);
+  } catch {
+    return no("chain read failed");
+  }
+  if (pending) return no("a block is pending"); // GUARD:C-pending
+  const hit = findHash(hist, intent.block, base, baseText);
+  if (!hit.found) return no("block is not on chain");
+  if (hit.foreign || hit.fee > REFUND_FEE_CAP || hit.fee !== amountOf(receipt.fee)) return no(`fee on chain ${show18(hit.fee)} is over the cap or differs from the receipt`); // GUARD:C-fee
+  const onChain = hist.memos.map((m) => `${m.hash}:${m.to}:${m.amount.toString()}`).sort();
+  expected.sort();
+  if (onChain.length !== expected.length || onChain.some((item, index) => item !== expected[index])) {
+    return no(`refund sends on chain (${onChain.length}) do not match the sent batches (${expected.length})`); // GUARD:C-ops
+  }
+  if (new Set(hist.memos.map((m) => m.to)).size !== hist.memos.length) return no("a wallet has more than one refund on chain"); // GUARD:C-once
+  if (balance !== amountOf(receipt.balanceAfter)) return no(`balance ${show18(balance)} moved since the receipt`); // GUARD:C-balance
+  let books;
+  try { books = loadBooks(io, dir); }
+  catch { return no("books are unreadable"); }
+  if (accounted(books) !== balance) return no(booksReason(accounted(books), balance)); // GUARD:C-books-chain
+  for (const key of [...touched, TREY_A, TREY_B, BRIDGE]) {
+    if ((books.share.stake.get(key) ?? 0n) !== 0n || books.share.lots.some((lot) => lot.from === key)) return no(`books still hold stake for ${key}`); // GUARD:C-books-zero
+  }
+  const marker = {
+    batch,
+    block: intent.block,
+    staple: hit.stapleHash,
+    intentSha: sha256(read.bytes),
+    fullPlan: intent.fullPlan,
+    recipients: intent.recipients.map((row) => ({ key: row.key, amount: row.amount })),
+    fee: hit.fee.toString(),
+    balanceAfter: balance.toString(),
+  };
+  const body = `${JSON.stringify(marker, null, 2)}\n`;
+  const path = `${bdir}/verified.json`;
+  if (io.existsSync(path)) {
+    if (io.readFileSync(path, "utf8") !== body) return no("verify marker exists and differs"); // GUARD:C-marker
+    say("already verified, marker unchanged");
+  } else {
+    exclusiveWrite(io, path, body);
+  }
+  for (const row of intent.recipients) say(`PAID ${row.key} ${show18(BigInt(row.amount))} raw ${row.amount}`);
+  say(`BLOCK ${intent.block} STAPLE ${hit.stapleHash || "unknown"}`);
+  say(`FEE ${show18(hit.fee)}`);
+  say(`BALANCE ${show18(balance)}`);
+  say(`REFUND_SENDS_ON_CHAIN ${hist.memos.length}`);
+  say(`REFUND_BATCH_VERIFIED ${batch} ${intent.block}`);
+  return 0;
+}
+
 async function main(deps = {}) {
   const argv = deps.argv ?? process.argv.slice(2);
   const dir = deps.dir ?? ROOT;
@@ -830,16 +1075,22 @@ async function main(deps = {}) {
   try {
   const uid = deps.uid !== undefined ? deps.uid : process.getuid();
   if (uid !== 0) return refuse("must run as root"); // GUARD:H3-root
-  if (mode !== "verify") {
+  const batch = batchOf(argv);
+  if (mode !== "verify" && mode !== "check") {
     const refundDir = ensureRefundDir(io, dir);
     logPath = `${refundDir}/refund-${when}.log`;
     io.appendFileSync(logPath, "");
     io.chmodSync(logPath, 0o600);
   }
   say(`REFUND ${mode} ${when}`);
+  if (!batch) return refuse("batch flag is missing or invalid"); // GUARD:W-batch-flag
+  const bdir = batchDirOf(dir, batch);
+  if (batch !== "all") say(`BATCH ${batch}`);
+
+  if (mode === "check") return await checkBatch({ deps, dir, batch, bdir, io, say, owned });
 
   if (mode === "verify") {
-    const intentPath = `${dir}/refund/intent.json`;
+    const intentPath = `${bdir}/intent.json`;
     if (!io.existsSync(intentPath)) {
       say("REFUND_VERIFY: no intent");
       return 0;
@@ -887,9 +1138,9 @@ async function main(deps = {}) {
       fee: hit.fee,
     });
     if (state === "LANDED") {
-      if (io.existsSync(`${dir}/refund/done.json`)) { // GUARD:R3-once
+      if (io.existsSync(`${bdir}/done.json`)) { // GUARD:R3-once
         let doneBody;
-        try { doneBody = JSON.parse(io.readFileSync(`${dir}/refund/done.json`, "utf8")); }
+        try { doneBody = JSON.parse(io.readFileSync(`${bdir}/done.json`, "utf8")); }
         catch {
           say("REFUND_VERIFY: UNKNOWN done.json unreadable"); // GUARD:N3-unreadable
           return 3;
@@ -915,14 +1166,14 @@ async function main(deps = {}) {
       }
       const shown = typeof intent.block === "string" && /^[0-9A-F]{64}$/.test(intent.block) ? intent.block : "unknown";
       let receiptNames;
-      try { receiptNames = io.readdirSync(`${dir}/refund`); }
+      try { receiptNames = io.readdirSync(bdir); }
       catch { receiptNames = null; }
       if (!receiptNames || receiptNames.some((name) => String(name).startsWith("receipt-"))) {
         say(`REFUND_VERIFY: UNKNOWN_RECEIPT_NO_DONE ${shown}`);
         say("Stop. Do not adjust books. Send this output to Forge and KeeLend Ops.");
         return 4;
       }
-      const code = finishBooks({ dir, now, say, intent, io }, { fee: hit.fee, balance, stapleHash: hit.stapleHash });
+      const code = finishBooks({ dir, now, say, intent, io, batch }, { fee: hit.fee, balance, stapleHash: hit.stapleHash });
       if (code !== 0) return code;
       say("REFUND_VERIFY: LANDED (finished now)");
       return 0;
@@ -951,8 +1202,8 @@ async function main(deps = {}) {
     if (io.existsSync(`${dir}/${name}`)) return refuse(`${name} is present`); // GUARD:G2
   }
   if (io.existsSync(`${dir}/payout-intent.json`)) return refuse("payout-intent.json is present"); // GUARD:G2
-  const priorIntent = `${dir}/refund/intent.json`;
-  const priorDone = `${dir}/refund/done.json`;
+  const priorIntent = `${bdir}/intent.json`;
+  const priorDone = `${bdir}/done.json`;
   if (io.existsSync(priorIntent) || io.existsSync(priorDone)) { // GUARD:G3
     const path = io.existsSync(priorIntent) ? priorIntent : priorDone;
     const kind = io.existsSync(priorIntent) ? "intent" : "done";
@@ -963,6 +1214,22 @@ async function main(deps = {}) {
     } catch { /* keep unknown */ }
     return refuse(`prior refund ${kind} ${note}. Use --verify.`);
   }
+  const R = `${dir}/refund`;
+  const others = batch === "all"
+    ? [`${R}/b1/intent.json`, `${R}/b1/done.json`, `${R}/b2/intent.json`, `${R}/b2/done.json`, `${R}/plan.json`]
+    : batch === "1"
+      ? [`${R}/intent.json`, `${R}/done.json`, `${R}/b2/intent.json`, `${R}/b2/done.json`, `${R}/plan.json`]
+      : [`${R}/intent.json`, `${R}/done.json`];
+  if (others.some((path) => io.existsSync(path))) return refuse("refund files from another batch are present. Use --verify."); // GUARD:W-state
+  const recs = readRecords(io, dir);
+  if (!recs.ok) return refuse(recs.why); // GUARD:W-rec-read
+  if (batch !== "2" && recs.keys.length > 0) return refuse(`wallet records are present (${recs.keys.length})`); // GUARD:W-rec-empty
+  let b1 = null;
+  if (batch === "2") {
+    const why = batchOneProblem(io, R, recs);
+    if (why) return refuse(why);
+    b1 = loadBatchOne(io, R);
+  }
 
   const chainParts = await resolveChain(deps);
   let client = deps.client ?? await openReadOnly(deps, owned);
@@ -970,7 +1237,8 @@ async function main(deps = {}) {
   const hist = await readHistory(client);
   if (hist.error) return refuse("history read failed");
   if (hist.capped) return refuse("history page cap hit before cutoff"); // GUARD:G3b-cap
-  if (hist.memos.length > 0) return refuse(`refund memo already on chain in block ${hist.memos[0].hash}`); // GUARD:G3b-memo
+  if (batch !== "2" && hist.memos.length > 0) return refuse(`refund memo already on chain in block ${hist.memos[0].hash}`); // GUARD:G3b-memo
+  if (batch === "2" && !hist.memos.some((m) => m.hash === b1.intent.block && m.to === CANARY && m.amount === b1.amount)) return refuse("batch 1 is not on chain"); // GUARD:W-chain-b1
   let pending;
   try { pending = await client.pendingBlock(); }
   catch { return refuse("a block is already pending"); }
@@ -1004,15 +1272,54 @@ async function main(deps = {}) {
 
   if (unpayableStake(books)) return refuse("unpayable stake"); // GUARD:G8
 
-  let planned = planOf(books, drain.parsed.weights);
-  if (planned.pool <= 0n) return refuse("pool is empty");
-  if (Object.prototype.hasOwnProperty.call(deps, "plannerFault")) {
-    if (deps.plannerFault === "excluded") planned.rows.push({ key: TREY_A, stake: 0n, weight: "0", addback: 0n, amount: 1n });
-    if (deps.plannerFault === "zero") planned.rows.push({ key: PINNED[0], stake: 0n, weight: "0", addback: 0n, amount: 0n });
-    if (deps.plannerFault === "total") planned.total += 1n;
+  let full;
+  let planned;
+  let preview = null;
+  if (batch !== "2") {
+    full = planOf(books, drain.parsed.weights);
+    if (full.pool <= 0n) return refuse("pool is empty");
+    if (Object.prototype.hasOwnProperty.call(deps, "plannerFault")) {
+      if (deps.plannerFault === "excluded") full.rows.push({ key: TREY_A, stake: 0n, weight: "0", addback: 0n, amount: 1n });
+      if (deps.plannerFault === "zero") full.rows.push({ key: PINNED[0], stake: 0n, weight: "0", addback: 0n, amount: 0n });
+      if (deps.plannerFault === "total") full.total += 1n;
+    }
+    if (assertPlan(full.rows, full.total)) return refuse("plan assertion failed"); // GUARD:R7
+    full.digest = digestOf(full.rows.filter((row) => row.amount > 0n));
+    if (batch === "all") {
+      planned = full;
+    } else {
+      const rows = full.rows.filter((row) => row.key === CANARY);
+      if (rows.length !== 1) return refuse("canary row is missing");
+      planned = sliceOf(full, rows);
+      preview = sliceOf(full, full.rows.filter((row) => row.key !== CANARY));
+    }
+  } else {
+    full = { ...b1.plan, digest: b1.plan.fullPlan };
+    const planKeys = new Set(full.rows.map((row) => row.key));
+    for (const [key, amount] of books.share.stake) {
+      if (amount > 0n && !EXCLUDED.has(key) && !planKeys.has(key)) return refuse(`unplanned stake on ${key}`); // GUARD:W-unplanned
+    }
+    for (const key of [TREY_A, TREY_B, BRIDGE]) {
+      if ((books.share.stake.get(key) ?? 0n) !== 0n) return refuse("excluded stake is not zero after batch 1"); // GUARD:W-excluded-zero
+    }
+    const rows = [];
+    for (const row of full.rows) {
+      if (recs.records.has(row.key)) continue; // GUARD:W-rec-skip
+      const live = books.share.stake.get(row.key) ?? 0n;
+      if (live > row.stake) return refuse(`stake grew since the plan on ${row.key}`); // GUARD:W-stake-grew
+      const amount = live + row.addback;
+      if (amount === 0n) continue;
+      rows.push({ key: row.key, stake: live, weight: row.weight, addback: row.addback, amount });
+    }
+    planned = sliceOf(full, rows);
+    if (assertPlan(planned.rows, planned.total)) return refuse("plan assertion failed");
+    const keys = new Set(planned.rows.map((row) => row.key));
+    if (hist.memos.some((m) => keys.has(m.to))) return refuse("a selected wallet already has a refund on chain"); // GUARD:W-chain-overlap
+    if (hist.memos.some((m) => !(m.hash === b1.intent.block && m.to === CANARY))) return refuse("unexpected refund memo on chain"); // GUARD:W-chain-extra
   }
-  if (assertPlan(planned.rows, planned.total)) return refuse("plan assertion failed"); // GUARD:R7
-  planned.digest = digestOf(planned.rows.filter((row) => row.amount > 0n));
+  let excludedNow = 0n;
+  for (const key of EXCLUDED) excludedNow += books.share.stake.get(key) ?? 0n;
+  const operatorShort = books.operator + excludedNow - planned.addbacks - REFUND_FEE_CAP < 0n;
   for (const row of planned.rows) {
     if (!(row.amount > 0n)) continue;
     try { accountFrom(row.key); } // GUARD:B1-decode
@@ -1022,7 +1329,9 @@ async function main(deps = {}) {
 
   if (mode === "no-quote") { // GUARD:no-quote-no-sign
     if (chain < planned.total + REFUND_FEE_CAP + RESERVE) return refuse("balance is short of the refund"); // GUARD:G11
+    if (operatorShort) return refuse("operator would go negative"); // GUARD:W-operator
     for (const line of summaryLines(planned, books, "not quoted", chain, chain - planned.total - REFUND_FEE_CAP)) say(line);
+    for (const line of batchLines(batch, full, preview)) say(line);
     say("REFUND_DRY_RUN_OK (no quote)");
     atomicWrite(io, `${dir}/refund/dryrun-${when}.txt`, `${lines.join("\n")}\n`);
     return 0;
@@ -1041,6 +1350,11 @@ async function main(deps = {}) {
     if (confirmPlan === undefined || confirmPlan !== planned.digest) { // GUARD:G12-plan
       if (confirmPlan === undefined) return refuse("confirm flags are missing");
       return refuse("confirm plan does not match");
+    }
+    const confirmFull = flag(argv, "--confirm-full");
+    if (batch !== "all" && confirmFull !== full.digest) { // GUARD:W-confirm-full
+      if (confirmFull === undefined) return refuse("confirm flags are missing");
+      return refuse("confirm full plan does not match");
     }
   }
 
@@ -1072,9 +1386,11 @@ async function main(deps = {}) {
   if (quoted.kta > REFUND_FEE_CAP) return refuse("quote is over the refund fee cap"); // GUARD:G10-quote
   const { generateFeeBlock, taken } = makeFee(client, base, baseText);
   if (chain < planned.total + REFUND_FEE_CAP + RESERVE) return refuse("balance is short of the refund"); // GUARD:G11-quoted
+  if (operatorShort) return refuse("operator would go negative"); // GUARD:W-operator-quoted
 
   const feeText = show18(quoted.kta);
   for (const line of summaryLines(planned, books, feeText, chain, chain - planned.total - quoted.kta)) say(line);
+  for (const line of batchLines(batch, full, preview)) say(line);
   if (mode !== "send") { // GUARD:dry-run-no-publish
     let again = null;
     let pendingUnknown = false;
@@ -1156,8 +1472,29 @@ async function main(deps = {}) {
     balanceBefore: chainAgain.toString(),
     floor: (chainAgain - planned.total).toString(),
     published: stamp(now()),
+    batch,
+    fullPlan: full.digest,
   };
-  atomicWrite(io, `${dir}/refund/intent.json`, `${JSON.stringify(intent, null, 2)}\n`); // GUARD:R4-intent-before-publish
+  const batchDir = ensureBatchDir(io, dir, batch);
+  if (batch === "1") {
+    const frozen = {
+      fullPlan: full.digest,
+      pool: full.pool.toString(),
+      addbacks: full.addbacks.toString(),
+      total: full.total.toString(),
+      rows: full.rows.map((row) => ({ key: row.key, stake: row.stake.toString(), weight: row.weight, addback: row.addback.toString(), amount: row.amount.toString() })),
+    };
+    exclusiveWrite(io, `${dir}/refund/plan.json`, `${JSON.stringify(frozen, null, 2)}\n`); // GUARD:W-plan-write
+  }
+  const walletsDir = `${dir}/refund/wallets`;
+  io.mkdirSync(walletsDir, { recursive: true, mode: 0o700 });
+  io.chmodSync(walletsDir, 0o700);
+  for (const row of planned.rows) {
+    const record = { key: row.key, batch, block: intent.block, amount: row.amount.toString(), at: intent.published };
+    exclusiveWrite(io, `${walletsDir}/${row.key}.json`, `${JSON.stringify(record, null, 2)}\n`); // GUARD:W-rec-write
+  }
+  fsyncDir(io, walletsDir);
+  atomicWrite(io, `${batchDir}/intent.json`, `${JSON.stringify(intent, null, 2)}\n`); // GUARD:R4-intent-before-publish
   let published;
   try {
     published = await client.publishBuilder(builder, { generateFeeBlock, quotes });
@@ -1192,7 +1529,7 @@ async function main(deps = {}) {
   const expected = chainAgain - planned.total - fee;
   const landed = hit.found && feeOk && !pendingLand && balanceLand === expected; // GUARD:R1-landed
   if (landed) {
-    const code = finishBooks({ dir, now, say, intent, io, reserveBefore: reserveAtCheck }, { fee, balance: balanceLand, stapleHash: hit.stapleHash });
+    const code = finishBooks({ dir, now, say, intent, io, batch, reserveBefore: reserveAtCheck }, { fee, balance: balanceLand, stapleHash: hit.stapleHash });
     if (code !== 0) return code;
     say("REFUND_SENT_OK");
     return 0;
@@ -1220,6 +1557,10 @@ async function main(deps = {}) {
     const name = err instanceof Error && err.name ? err.name : "Error";
     if (mode === "verify") { // GUARD:F3
       say(`REFUND_VERIFY: UNKNOWN unexpected ${name}`);
+      return 3;
+    }
+    if (mode === "check") {
+      say(`REFUND_BATCH_NOT_VERIFIED: unexpected ${name}`);
       return 3;
     }
     if (stopOpen) { // GUARD:S3-after
