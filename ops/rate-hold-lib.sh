@@ -106,7 +106,7 @@ rb() {
   local st f; trap - ERR HUP INT TERM; set +e; echo "something failed, putting 7ee5308 back (state, books and hold files are not touched)"
   systemctl stop koreminer </dev/null; sleep 3; st=$(systemctl is-active koreminer </dev/null)
   [ "$st" = inactive ] || [ "$st" = failed ] || { echo "RUNNER_CHECK_FAILED: the runner did not stop (state $st), so nothing was put back. Do not start or stop it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }
-  for f in STOP RATEHOLD FEEHOLD; do [ -e $D/$f ] && { echo "STOPPED_FOR_REVIEW: $f is present, so the rate-hold version was kept (it honours $f, the old code would not) and the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }; done
+  for f in STOP RATEHOLD FEEHOLD; do [ -e $D/$f ] && { echo "STOPPED_FOR_REVIEW: $f is present, so nothing was put back (files stay on the rate-hold version, which honours STOP, RATEHOLD and FEEHOLD; the old code ignores the last two) and the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }; done
   cp -p $B/run.mjs $B/pace.mjs $D/
   vers "$OLD" || { echo "STOPPED_FOR_REVIEW: run.mjs or pace.mjs is not 7ee5308 after the restore, so the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }
   GM=stopped; guard || { echo "STOPPED_FOR_REVIEW: $LEFT. Files are back on 7ee5308 but the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ROLLED_BACK_TO_7EE5308; echo ${X}_FAIL; exit 1; }
