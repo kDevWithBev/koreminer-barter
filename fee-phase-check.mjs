@@ -45,7 +45,7 @@ function setEnv(env) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   };
-  write("PICKS_OFF", env.picks);
+  write("PICKS_OFF", env.picks ?? "0"); // r2: unset now means off, so picks-on tests say 0
   write("FEE_CAP_PER_BUNDLE_KTA", env.fee);
   write("PAYOUT_FEE_CAP_KTA", env.cap);
   write("PAYOUT_FEE_BUDGET_KTA_PER_DAY", env.budget);

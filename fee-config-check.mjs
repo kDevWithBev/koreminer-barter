@@ -1,5 +1,6 @@
 import { bundleCap, configLine, fromKta, maxBlocksPerHour } from "./pace.mjs";
 import { makeBooks, makeClient, runCase } from "./fee-harness.mjs";
+process.env.PICKS_OFF = "0"; // fix/rate-hold r2: picks run only with PICKS_OFF=0 (missing or empty now means off)
 
 // fix/rate-hold: hard ceilings 0.05 KTA a block and 60 ledger blocks an hour; env can lower, never raise.
 const HARD = " Hard limits 0.05000 KTA a block, 60 ledger blocks an hour, payout 0.05000 KTA a block and 0.50000 KTA a day.";

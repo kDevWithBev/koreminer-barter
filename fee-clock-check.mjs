@@ -1,5 +1,6 @@
 import { FEE_PER_TX, fromKta } from "./pace.mjs";
 import { makeBooks, makeClient, readState, runCase } from "./fee-harness.mjs";
+process.env.PICKS_OFF = "0"; // fix/rate-hold r2: picks run only with PICKS_OFF=0 (missing or empty now means off)
 
 let passed = 0;
 function check(name, ok, extra = "") {

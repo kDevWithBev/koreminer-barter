@@ -98,7 +98,7 @@ const status = (dir) => { try { return JSON.parse(readFileSync(join(dir, "status
 const has = (dir, f) => existsSync(join(dir, f));
 
 
-delete process.env.PICKS_OFF; delete process.env.MAX_BLOCKS_PER_HOUR; delete process.env.FEE_CAP_PER_BUNDLE_KTA;
+process.env.PICKS_OFF = "0"; delete process.env.MAX_BLOCKS_PER_HOUR; delete process.env.FEE_CAP_PER_BUNDLE_KTA; // r2: picks on needs PICKS_OFF=0
 const out = (k, v) => say(`NEG ${k}: ${v}`);
 const worstReal = (ats) => { let w = 0; for (const t of ats) w = Math.max(w, ats.filter((x) => x > t - HOUR && x <= t).length * 2); return w; };
 

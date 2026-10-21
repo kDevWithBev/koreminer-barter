@@ -64,9 +64,16 @@ async function withEnv(env, fn) {
   }
 }
 
-delete process.env.PICKS_OFF;
+// fix/rate-hold r2 (Trey via Bob: picks stay off): fail safe. Picks run only with PICKS_OFF exactly "0".
 delete process.env.MAX_BLOCKS_PER_HOUR;
-check("picks are on unless asked", picksOff() === false && maxBlocksPerHour() === 60);
+delete process.env.PICKS_OFF;
+check("r2 PICKS_OFF missing means picks off", picksOff() === true);
+for (const v of ["", " ", "no", "false", "00", "0 ", "1"]) {
+  process.env.PICKS_OFF = v;
+  check(`r2 PICKS_OFF=${JSON.stringify(v)} means picks off`, picksOff() === true);
+}
+process.env.PICKS_OFF = "0";
+check("picks are on only with PICKS_OFF=0", picksOff() === false && maxBlocksPerHour() === 60);
 
 await withEnv({ picks: "1" }, async () => {
   check("PICKS_OFF=1 turns picks off", picksOff() === true && maxBlocksPerHour() === 60);
@@ -124,13 +131,24 @@ await withEnv({ rate: "0" }, async () => {
   check("a zero block rate sleeps 30s when idle and logs once", idle.sleeps.every((ms) => ms === 30000) && notes(idle.logs).length === 1, idle.sleeps.join(","));
 });
 
-await withEnv({}, async () => {
+// fix/rate-hold r2: unset or empty PICKS_OFF runs no picks (it used to mean picks on).
+for (const picks of [undefined, ""]) {
+  await withEnv({ picks }, async () => {
+    const books = makeBooks(false);
+    const client = makeClient(books, { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
+    const seen = watch(client);
+    const ran = await runCase({ books, client, steps: 2 });
+    check(`r2 PICKS_OFF ${picks === undefined ? "missing" : "empty"}: the runner builds, quotes and publishes no pick`, seen.pickBuilds === 0 && seen.pickQuotes === 0 && ran.client.publishes.length === 0 && notes(ran.logs).length === 1, String(seen.pickBuilds));
+  });
+}
+
+await withEnv({ picks: "0" }, async () => {
   const books = makeBooks(false);
   const client = makeClient(books, { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
   const seen = watch(client);
   const ran = await runCase({ books, client, steps: 1 });
-  check("picks stay on by default", seen.pickBuilds === 1 && ran.client.publishes.some((row) => row.kind === "pick"), String(seen.pickBuilds));
-  check("the default run does not say picks are off", notes(ran.logs).length === 0);
+  check("picks run with PICKS_OFF=0", seen.pickBuilds === 1 && ran.client.publishes.some((row) => row.kind === "pick"), String(seen.pickBuilds));
+  check("the PICKS_OFF=0 run does not say picks are off", notes(ran.logs).length === 0);
 });
 
 console.log("fee-picks-off checks", passed);

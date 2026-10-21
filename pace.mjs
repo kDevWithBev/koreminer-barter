@@ -79,8 +79,10 @@ export function maxBlocksPerHour() {
   return readRate().value;
 }
 
+// Fail safe (r2, Trey via Bob: picks stay off): picks run only when PICKS_OFF is exactly "0".
+// Missing, empty or any other value means picks are off.
 export function picksOff() {
-  if (process.env.PICKS_OFF === "1") return true;
+  if (process.env.PICKS_OFF !== "0") return true;
   const text = process.env.MAX_BLOCKS_PER_HOUR;
   if (text === undefined || text === "") return false;
   const raw = Number(text);

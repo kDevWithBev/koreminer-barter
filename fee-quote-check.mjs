@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { FEE_PER_TX, fromKta } from "./pace.mjs";
 import { makeBooks, makeClient, runCase } from "./fee-harness.mjs";
+process.env.PICKS_OFF = "0"; // fix/rate-hold r2: picks run only with PICKS_OFF=0 (missing or empty now means off)
 
 const PICK_ALERT = "ALERT Fee 3.00300 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
 const PAY_ALERT = "ALERT Payout fee 3.00300 KTA is over the 0.05000 KTA payout cap. Payout stays queued.";
@@ -50,7 +51,7 @@ async function overQuote(kind) {
       },
     });
   } finally {
-    if (kind === "payout") delete process.env.PICKS_OFF;
+    if (kind === "payout") process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
   }
   const seen = alerts(ran.errors);
   if (kind === "payout") {

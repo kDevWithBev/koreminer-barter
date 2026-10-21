@@ -41,7 +41,7 @@ function payoutState() {
 const savedPicks = process.env.PICKS_OFF;
 
 try {
-  delete process.env.PICKS_OFF;
+  process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
 
   const sumBooks = makeBooks(false);
   const sum = await runCase({

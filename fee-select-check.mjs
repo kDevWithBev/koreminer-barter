@@ -44,7 +44,7 @@ function payoutState() {
 const savedPicks = process.env.PICKS_OFF;
 
 try {
-  delete process.env.PICKS_OFF;
+  process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
 
   const mixedBooks = makeBooks(true);
   const mixedClient = makeClient(mixedBooks, {
@@ -73,7 +73,7 @@ try {
   check("mixed options spend 0.00404 of the budget", mixedState.payoutFeeSpent === fromKta("0.00404").toString(), String(mixedState.payoutFeeSpent));
   check("mixed options do not alert", alerts(mixed.errors).length === 0, alerts(mixed.errors).join("\n"));
 
-  delete process.env.PICKS_OFF;
+  process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
   const highBooks = makeBooks(false);
   const high = await runCase({
     books: highBooks,

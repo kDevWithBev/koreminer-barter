@@ -6,6 +6,7 @@ import { minPublishGapMs } from "./pace.mjs";
 import { makeBooks, makeClient, readState } from "./fee-harness.mjs";
 import { fromKta } from "./pace.mjs";
 import { runShaft } from "./run.mjs";
+process.env.PICKS_OFF = "0"; // fix/rate-hold r2: picks run only with PICKS_OFF=0 (missing or empty now means off)
 
 const say = console.log;
 const yell = console.error;

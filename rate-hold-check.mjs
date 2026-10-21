@@ -97,7 +97,7 @@ const state = (dir) => JSON.parse(readFileSync(join(dir, "state.json"), "utf8"))
 const status = (dir) => { try { return JSON.parse(readFileSync(join(dir, "status.json"), "utf8")); } catch { return null; } };
 const has = (dir, f) => existsSync(join(dir, f));
 
-delete process.env.PICKS_OFF;
+process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
 delete process.env.MAX_BLOCKS_PER_HOUR;
 delete process.env.FEE_CAP_PER_BUNDLE_KTA;
 delete process.env.PAYOUT_FEE_CAP_KTA;
@@ -224,7 +224,7 @@ for (const kind of ["throw", "null", "empty"]) {
   const time = { t: start };
   const dir = makeDir({ books, send: true, state: baseState({ closeOpen: true, recent: [[start - 60_000, 59]] }) });
   const r = await tick(dir, client, time, 3);
-  delete process.env.PICKS_OFF;
+  process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
   check("G8 a payout that would make 61 trips RATEHOLD and is not sent", pays(client).length === 0 && has(dir, "RATEHOLD") && !has(dir, "payout-intent.json") && aliceDue(books) > 0n, show({ pubs: client.publishes, errors: r.errors }));
 }
 
@@ -309,7 +309,7 @@ for (const kind of ["throw", "null", "empty"]) {
   await tick(dir, client, time, 0);
   const st = status(dir);
   check("B2 startup rewrites a same-key status.json left by an earlier run (since is this start)", st && st.state === "running" && st.reason === "picks off" && st.since === new Date(start).toISOString(), JSON.stringify(st));
-  delete process.env.PICKS_OFF;
+  process.env.PICKS_OFF = "0"; // r2: picks on needs PICKS_OFF=0
   const dir2 = makeDir({ books: makeBooks(false) });
   await tick(dir2, makeClient(makeBooks(false), { pickQuote: fromKta("0.006") }), { t: start }, 0);
   check("B2 startup writes status.json before the loop runs", status(dir2)?.state === "running" && status(dir2)?.reason === "starting", JSON.stringify(status(dir2)));

@@ -2,6 +2,7 @@ import { FEE_PER_TX, fromKta } from "./pace.mjs";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { aliceDue, makeBooks, makeClient, readState, runCase } from "./fee-harness.mjs";
+process.env.PICKS_OFF = "0"; // fix/rate-hold r2: picks run only with PICKS_OFF=0 (missing or empty now means off)
 
 // fix/rate-hold: a pick over the cap writes FEEHOLD and stays paused (was: back off and retry).
 const ALERT = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";

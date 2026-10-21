@@ -6,6 +6,7 @@ import { startMs } from "./ledger.mjs";
 import { FEE_PER_TX, fromKta } from "./pace.mjs";
 import { makeClient } from "./fee-harness.mjs";
 import { runShaft } from "./run.mjs";
+process.env.PICKS_OFF = "0"; // fix/rate-hold r2: picks run only with PICKS_OFF=0 (missing or empty now means off)
 
 const say = console.log;
 const yell = console.error;
