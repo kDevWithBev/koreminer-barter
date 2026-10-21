@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync, constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, blocksInHour, bundleCap, configLine, judgeQuote, kta, maxBlocksPerHour, minPublishGapMs, pace, payoutFeeBudget, payoutFeeCap, picksOff, pruneRecent } from "./pace.mjs";
 import { RESERVE, accrue, due } from "./share.mjs";
@@ -490,12 +490,15 @@ export async function runShaft({
       };
     } catch {
       // A state.json that exists but can't be read loses the rolling count: fail safe into RATEHOLD
-      // (kept copy in state.json.bad) instead of starting the count again from 0. A missing file is a first start.
+      // (a timestamped copy, state.json.bad-<time>, never overwritten) instead of starting the count again from 0.
+      // A missing file is a first start.
       if (existsSync(statePath)) {
-        try { copyFileSync(statePath, `${statePath}.bad`); } catch { /* the hold still stands */ }
+        const stamp = new Date(now()).toISOString();
+        const bad = `${statePath}.bad-${stamp.replace(/[:.]/g, "-")}`;
+        try { copyFileSync(statePath, bad, fsConstants.COPYFILE_EXCL); } catch { /* the hold still stands */ }
         if (!existsSync(rateHoldPath)) {
-          writeFileSync(rateHoldPath, `state.json unreadable at ${new Date(now()).toISOString()}, so the rolling hour count is unknown (copy in state.json.bad). Remove this file only after review.\n`);
-          console.error("ALERT state.json is unreadable, so the rolling hour count is unknown. All publishing paused (RATEHOLD). Remove RATEHOLD only after review.");
+          writeFileSync(rateHoldPath, `state.json unreadable at ${stamp}, so the rolling hour count is unknown. Restore state.json from ${bad.slice(dir.length + 1)} (or review it) before removing RATEHOLD.\n`);
+          console.error(`ALERT state.json is unreadable, so the rolling hour count is unknown. All publishing paused (RATEHOLD). Restore state.json from ${bad.slice(dir.length + 1)} before removing RATEHOLD.`);
         }
       }
       return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0, payoutFeeDay: "", payoutFeeSpent: 0n, recent: [] };
@@ -1479,6 +1482,8 @@ async function main() {
     koreAccount: KeetaNet.lib.Account.fromPublicKeyString(kore),
     accountFrom: (id) => KeetaNet.lib.Account.fromPublicKeyString(id),
   });
+  // STOP, HALT or a clean end: exit 0 now, so an open SDK handle can't keep an idle process around.
+  process.exit(0);
 }
 
 function startedDirectly() {

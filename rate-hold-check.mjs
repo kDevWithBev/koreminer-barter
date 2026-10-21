@@ -1,6 +1,6 @@
 // fix/rate-hold behaviour tests (G2-G8, G10, G11). Fake clock and fake chain; no network, no seed.
 // Each check runs the real runShaft over several ticks. Set RH_SOFT=1 to list every failure instead of stopping at the first.
-import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { booksToJson, createBooks } from "./books.mjs";
@@ -365,7 +365,15 @@ for (const kind of ["throw", "null", "empty"]) {
   const bad = '{"recent":[[' + (start - 60000) + ',58]],"windowStart":';
   const dir = makeDir({ books, files: { "state.json": bad } });
   const r = await tick(dir, client, time, 6);
-  check("r2 corrupt state.json writes RATEHOLD, one ALERT, publishes nothing, keeps a copy", has(dir, "RATEHOLD") && client.publishes.length === 0 && alerts(r.errors).length === 1 && readFileSync(join(dir, "state.json.bad"), "utf8") === bad, r.errors.join("\n"));
+  const bads = () => readdirSync(dir).filter((f) => f.startsWith("state.json.bad-")).sort();
+  check("r2 corrupt state.json writes RATEHOLD, one ALERT, publishes nothing, keeps a timestamped copy", has(dir, "RATEHOLD") && client.publishes.length === 0 && alerts(r.errors).length === 1 && bads().length === 1 && readFileSync(join(dir, bads()[0]), "utf8") === bad, r.errors.join("\n"));
+  const held = readFileSync(join(dir, "RATEHOLD"), "utf8");
+  check("r3 (b) the corrupt-state RATEHOLD and ALERT say to restore state.json from the .bad copy before removing RATEHOLD", held.includes(`Restore state.json from ${bads()[0]} (or review it) before removing RATEHOLD.`) && alerts(r.errors)[0].includes(`Restore state.json from ${bads()[0]} before removing RATEHOLD.`), held);
+  // A second corrupt event later keeps the first copy.
+  writeFileSync(join(dir, "state.json"), "{broken again");
+  const t2 = { t: start + 3_600_000 };
+  await tick(dir, makeClient(makeBooks(false), { pickQuote: fromKta("0.006") }), t2, 2);
+  check("r3 a second corrupt state.json gets its own copy; the first is not overwritten", bads().length === 2 && readFileSync(join(dir, bads()[0]), "utf8") === bad && readFileSync(join(dir, bads()[1]), "utf8") === "{broken again");
   const dir2 = makeDir({ books: makeBooks(false) });
   const c2 = makeClient(makeBooks(false), { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
   await tick(dir2, c2, { t: start }, 6);
@@ -394,6 +402,7 @@ for (const kind of ["throw", "null", "empty"]) {
   const run = readFileSync(new URL("./run.mjs", import.meta.url), "utf8");
   const pace = readFileSync(new URL("./pace.mjs", import.meta.url), "utf8");
   check("no refund call in run.mjs or pace.mjs", !/refund/i.test(run) && !/refund/i.test(pace));
+  check("r3 main exits 0 right after runShaft returns (STOP, HALT or a clean end)", /\n  await runShaft\(\{[^}]*\}\);\n(?:  \/\/[^\n]*\n)?  process\.exit\(0\);\n\}/.test(run));
   check("the runner never deletes FEEHOLD or RATEHOLD", !/unlinkSync\([^)]*(feeHoldPath|rateHoldPath|FEEHOLD|RATEHOLD)/.test(run));
 }
 

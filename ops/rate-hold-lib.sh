@@ -100,15 +100,22 @@ startcheck() {
   printf "%s\n" "$L" | grep -E "^Config fee cap|^Runner up|^Picks off|^Fee check|^SKIP|^Paused|ALERT" | cut -c1-230 | tail -n 5 || true
   SC=ok
 }
+# fixmix: after a half-failed restore, put the staged rate-hold set back (cp -p $S/run.mjs $S/pace.mjs $D/ && vers "$NEW")
+# and say which set is on disk: new, old or MIXED. Never starts the runner; the caller stays stopped.
+fixmix() {
+  if cp -p $S/run.mjs $S/pace.mjs $D/ 2>/dev/null && vers "$NEW"; then echo "on disk: new (rate-hold version, run.mjs and pace.mjs match). A reboot starts the rate-hold version, which honours holds."; return 0; fi
+  if vers "$OLD"; then echo "on disk: old (7ee5308, run.mjs and pace.mjs match)."; return 0; fi
+  echo "on disk: MIXED (run.mjs $(md5of $D/run.mjs | cut -c1-8), pace.mjs $(md5of $D/pace.mjs | cut -c1-8)). Do not start or reboot. Send this to Forge now."
+}
 # rb: STEP3 auto-rollback to 7ee5308 (set +e). Copies only when the unit really stopped and no STOP, RATEHOLD or
 # FEEHOLD is present: the rate-hold version honours those files and the old code would not, so it is kept.
 rb() {
-  local st f; trap - ERR HUP INT TERM; set +e; echo "something failed, putting 7ee5308 back (state, books and hold files are not touched)"
+  local st f; trap - ERR INT TERM; trap "" HUP; set +e; echo "something failed, putting 7ee5308 back (state, books and hold files are not touched)"
   systemctl stop koreminer </dev/null; sleep 3; st=$(systemctl is-active koreminer </dev/null)
   [ "$st" = inactive ] || [ "$st" = failed ] || { echo "RUNNER_CHECK_FAILED: the runner did not stop (state $st), so nothing was put back. Do not start or stop it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }
-  for f in STOP RATEHOLD FEEHOLD; do [ -e $D/$f ] && { echo "STOPPED_FOR_REVIEW: $f is present, so nothing was put back (files stay on the rate-hold version, which honours STOP, RATEHOLD and FEEHOLD; the old code ignores the last two) and the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }; done
+  for f in STOP RATEHOLD FEEHOLD; do [ -e $D/$f ] && { echo "STOPPED_FOR_REVIEW: $f is present, so nothing was put back (files stay on the rate-hold version, which honours STOP, RATEHOLD and FEEHOLD; the old code ignores the last two) and the runner was not started. A reboot starts the rate-hold version, which honours holds. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }; done
   cp -p $B/run.mjs $B/pace.mjs $D/
-  vers "$OLD" || { echo "STOPPED_FOR_REVIEW: run.mjs or pace.mjs is not 7ee5308 after the restore, so the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }
+  vers "$OLD" || { echo "STOPPED_FOR_REVIEW: run.mjs or pace.mjs is not 7ee5308 after the restore, so the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; fixmix; echo ${X}_FAIL; exit 1; }
   GM=stopped; guard || { echo "STOPPED_FOR_REVIEW: $LEFT. Files are back on 7ee5308 but the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ROLLED_BACK_TO_7EE5308; echo ${X}_FAIL; exit 1; }
   startcheck old "Picks off"; echo "runner on 7ee5308: $(systemctl is-active koreminer </dev/null), check: $SC"
   [ "$SC" = ok ] || echo "RUNNER_CHECK_FAILED: $SC. Do not start or stop it by hand. Send this whole output to Forge now."
