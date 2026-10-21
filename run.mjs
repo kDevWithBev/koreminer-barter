@@ -222,6 +222,7 @@ export async function runShaft({
   let feeChecked = false;
   let feeSkipNoted = "";
   let feeSkipAt = null;
+  let feeRetryAt = 0;
   let pausedNoted = "";
   let pausedNotedAt = null;
   let lastStatus = (() => {
@@ -232,6 +233,9 @@ export async function runShaft({
       return "";
     }
   })();
+  let statusWritten = false; // first write per process is unconditional, so status.json mtime proves this start
+  let statusSince = 0;
+  let statusBlocks = -1;
 
   function holdReason(path) {
     try {
@@ -244,13 +248,28 @@ export async function runShaft({
 
   function writeStatus(name, reason) {
     const key = `${name}|${reason}`;
-    if (key === lastStatus) return;
+    if (key === lastStatus && statusWritten) return;
+    statusWritten = true;
     if (lastStatus.startsWith("paused|") && name === "running") console.log("Resumed.");
     lastStatus = key;
+    statusSince = now();
+    putStatus(name, reason);
+  }
+
+  function putStatus(name, reason) {
     const at = now();
+    statusBlocks = blocksInHour(state.recent, at);
     try {
-      writeJson(statusPath, { state: name, reason, since: new Date(at).toISOString(), blocksLastHour: blocksInHour(state.recent, at), limit: maxBlocksPerHour() });
+      writeJson(statusPath, { state: name, reason, since: new Date(statusSince).toISOString(), blocksLastHour: statusBlocks, limit: maxBlocksPerHour() });
     } catch { /* the runner goes on; the hold file and the journal line still stand */ }
+  }
+
+  // Same state and reason, but the rolling count moved: rewrite the count (and keep "since").
+  function refreshStatus() {
+    if (!statusWritten) return;
+    if (blocksInHour(state.recent, now()) === statusBlocks) return;
+    const cut = lastStatus.indexOf("|");
+    putStatus(lastStatus.slice(0, cut), lastStatus.slice(cut + 1));
   }
 
   function notePaused(reason, tail) {
@@ -295,7 +314,9 @@ export async function runShaft({
       return false;
     }
     state.recent.push([at, n]);
+    state.lastPublishMs = at; // space from the attempt, so an unknown-result publish keeps the 120 s gap
     writeState(state);
+    refreshStatus();
     return true;
   }
 
@@ -468,6 +489,15 @@ export async function runShaft({
         recent: pruneRecent(saved.recent, now()),
       };
     } catch {
+      // A state.json that exists but can't be read loses the rolling count: fail safe into RATEHOLD
+      // (kept copy in state.json.bad) instead of starting the count again from 0. A missing file is a first start.
+      if (existsSync(statePath)) {
+        try { copyFileSync(statePath, `${statePath}.bad`); } catch { /* the hold still stands */ }
+        if (!existsSync(rateHoldPath)) {
+          writeFileSync(rateHoldPath, `state.json unreadable at ${new Date(now()).toISOString()}, so the rolling hour count is unknown (copy in state.json.bad). Remove this file only after review.\n`);
+          console.error("ALERT state.json is unreadable, so the rolling hour count is unknown. All publishing paused (RATEHOLD). Remove RATEHOLD only after review.");
+        }
+      }
       return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0, payoutFeeDay: "", payoutFeeSpent: 0n, recent: [] };
     }
   }
@@ -871,6 +901,9 @@ export async function runShaft({
   }
 
   console.log(configLine(blocksInHour(state.recent, now())));
+  if (existsSync(rateHoldPath)) writeStatus("paused", `RATEHOLD: ${holdReason(rateHoldPath)}`);
+  else if (existsSync(feeHoldPath)) writeStatus("paused", `FEEHOLD: ${holdReason(feeHoldPath)}`);
+  else writeStatus("running", picksOff() ? "picks off" : "starting");
   console.log("Runner up. Pace follows fuel. Ceiling 17/s. Reserve", kta(RESERVE), "KTA.", sendArmed() ? "KORE send is armed." : "KORE send is off.");
   console.log(closeAccrue ? "Close accrue on" : "Close accrue off");
   console.log("Dust sink:", sink);
@@ -1100,8 +1133,13 @@ function settlePayout(koreBal) {
   }
   while (!existsSync(`${dir}/STOP`)) {
     if (ran >= steps) break;
+    if (existsSync(`${dir}/HALT`)) {
+      console.log("HALT file present. Stopping.");
+      break;
+    }
     ran += 1;
     try {
+      refreshStatus();
       if (picksOff()) notePicksOff();
       if (now() - state.windowStart >= DAY_MS) {
         state = {
@@ -1234,6 +1272,10 @@ function settlePayout(koreBal) {
         continue;
       }
 
+      if (!feeChecked && now() < feeRetryAt) {
+        await sleep(30000);
+        continue;
+      }
       const started = now();
       blockNo += 1;
       let pack = plan.pack;
@@ -1282,7 +1324,8 @@ function settlePayout(koreBal) {
           else if (quotes != null && quoted.usable && quoted.amount > bundleCap()) tripFee(quoted.amount, false);
           else {
             writeStatus("running", `picks waiting: ${why}`);
-            await sleep(10 * 60 * 1000);
+            feeRetryAt = now() + 10 * 60 * 1000;
+            await sleep(30000);
           }
           continue;
         }

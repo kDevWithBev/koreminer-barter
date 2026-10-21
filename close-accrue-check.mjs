@@ -515,7 +515,13 @@ try {
       }
       return left.every((ms) => ms > 0 && ms <= 60_000);
     });
+    // fix/rate-hold r2 (Ops): the extra waits are only the gap, at most 60 s per publish, and the saved
+    // rolling count is exactly 2 ledger blocks (work + fee) per publish in this run (all within one hour).
+    const pubCount = ran.ticks.reduce((sum, tick) => sum + tick.pubs.length, 0);
+    const extraMs = ran.ticks.reduce((sum, tick, i) => sum + tick.sleeps.reduce((a, b) => a + b, 0) - baseline.ticks[i].sleeps.reduce((a, b) => a + b, 0), 0);
+    const counted = (ran.ticks.at(-1).state.recent ?? []).reduce((sum, item) => sum + item[1], 0);
     check(`flag ${label} sleeps match cbc28de except the 120 s gap, and state matches`, extraOk && JSON.stringify(noRecent(ran.ticks.at(-1).state)) === JSON.stringify(baseline.ticks.at(-1).state), JSON.stringify(ran.ticks.map((tick) => tick.sleeps)));
+    check(`flag ${label} block counter is 2 x publishes (${pubCount}) and extra waits are under 60 s a publish`, pubCount >= 1 && counted === 2 * pubCount && extraMs >= 0 && extraMs <= 60_000 * pubCount, `counted ${counted} pubs ${pubCount} extra ${extraMs}`);
     check(`flag ${label} prints close accrue off and does not credit`, ran.ticks.every((tick) => tick.logs.includes("Close accrue off") && creditLines(tick.logs).length === 0));
   }
   check("cbc28de copy has no close-accrue startup line", baseline.ticks.every((tick) => !tick.logs.some((line) => line.startsWith("Close accrue"))));

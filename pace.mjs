@@ -101,8 +101,9 @@ export function pruneRecent(list, at) {
     if (!Array.isArray(item) || item.length !== 2) continue;
     const t = Number(item[0]);
     const n = Number(item[1]);
-    if (!Number.isFinite(t) || !Number.isInteger(n) || n < 1 || n > 100) continue;
-    if (t > at - HOUR_MS) out.push([t, n]);
+    if (!Number.isFinite(t) || !Number.isFinite(n) || n <= 0) continue;
+    // An odd count is rounded up and capped at 100 (still over the 60 cap), never dropped.
+    if (t > at - HOUR_MS) out.push([t, Math.min(Math.ceil(n), 100)]);
   }
   return out.slice(-500);
 }

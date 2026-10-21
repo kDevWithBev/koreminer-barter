@@ -135,10 +135,10 @@ for (const kind of ["throw", "null", "empty"]) {
   };
   const time = { t: start };
   const dir = makeDir({ books });
-  const r = await tick(dir, client, time, 4);
+  const r = await tick(dir, client, time, 50);
   const skipIdx = r.logs.findIndex((l) => l === "SKIP: no usable fee quote. Picks not started.");
   const okIdx = r.logs.findIndex((l) => l.startsWith("Fee check ok: 0.00600 KTA a block, cap 0.05000 KTA. Picks start."));
-  check(`G6 ${kind} quote at start skips, holds no file, then starts after the 10 min retry`, skipIdx >= 0 && okIdx > skipIdx && !has(dir, "FEEHOLD") && r.sleeps.includes(600_000) && picks(client).length >= 1, r.logs.join("\n"));
+  check(`G6 ${kind} quote at start skips, holds no file, then starts after the 10 min retry`, skipIdx >= 0 && okIdx > skipIdx && !has(dir, "FEEHOLD") && !r.sleeps.includes(600_000) && r.sleeps.slice(0, 22).reduce((a, b) => a + b, 0) >= 600_000 && picks(client).length >= 1, r.logs.join("\n"));
 }
 
 // G6: non-KTA fee at start -> SKIP and FEEHOLD.
@@ -296,6 +296,97 @@ for (const kind of ["throw", "null", "empty"]) {
   process.env.FEE_CAP_PER_BUNDLE_KTA = "0.01";
   check("G2 the env can lower both", maxBlocksPerHour() === 20 && bundleCap() === fromKta("0.01"));
   for (const k of ["MAX_BLOCKS_PER_HOUR", "FEE_CAP_PER_BUNDLE_KTA", "PAYOUT_FEE_CAP_KTA", "PAYOUT_FEE_BUDGET_KTA_PER_DAY"]) delete process.env[k];
+}
+
+// r2 (Ops review B2): the first status write of each process is unconditional, and it happens at startup.
+{
+  const books = makeBooks(false);
+  const client = makeClient(books, { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
+  const time = { t: start };
+  const old = JSON.stringify({ state: "running", reason: "picks off", since: "2000-01-01T00:00:00.000Z", blocksLastHour: 0, limit: 60 });
+  process.env.PICKS_OFF = "1";
+  const dir = makeDir({ books, files: { "status.json": old } });
+  await tick(dir, client, time, 0);
+  const st = status(dir);
+  check("B2 startup rewrites a same-key status.json left by an earlier run (since is this start)", st && st.state === "running" && st.reason === "picks off" && st.since === new Date(start).toISOString(), JSON.stringify(st));
+  delete process.env.PICKS_OFF;
+  const dir2 = makeDir({ books: makeBooks(false) });
+  await tick(dir2, makeClient(makeBooks(false), { pickQuote: fromKta("0.006") }), { t: start }, 0);
+  check("B2 startup writes status.json before the loop runs", status(dir2)?.state === "running" && status(dir2)?.reason === "starting", JSON.stringify(status(dir2)));
+  const dir3 = makeDir({ books: makeBooks(false), files: { RATEHOLD: "review\n" } });
+  await tick(dir3, makeClient(makeBooks(false), { pickQuote: fromKta("0.006") }), { t: start }, 0);
+  check("B2 startup with RATEHOLD writes paused", status(dir3)?.state === "paused" && status(dir3)?.reason.startsWith("RATEHOLD:"), JSON.stringify(status(dir3)));
+}
+
+// r2 (Ops B4): one publish timeout at full pace keeps the 120 s gap and does not trip RATEHOLD.
+{
+  const time = { t: start };
+  const { books, client } = fuelled(time);
+  const real = client.publishBuilder.bind(client);
+  let n = 0;
+  const tries = [];
+  client.publishBuilder = async (...a) => { n += 1; tries.push(time.t); if (n === 40) throw new Error("timeout"); return real(...a); };
+  const dir = makeDir({ books });
+  const r = await tick(dir, client, time, 120);
+  const gaps = tries.slice(1).map((t, i) => t - tries[i]);
+  check("B4 one timeout at full pace: no RATEHOLD, no ALERT, picks go on", !has(dir, "RATEHOLD") && alerts(r.errors).length === 0 && picks(client).length >= 100, `${picks(client).length} ${r.errors.join("\n")}`);
+  check("B4 every publish attempt, the failed one included, is at least 120 s after the last", gaps.length > 50 && gaps.every((g) => g >= 120_000), JSON.stringify(gaps.filter((g) => g < 120_000)));
+}
+
+// r2 (Ops B5): no usable quote at start: the loop sleeps 30 s, payouts still go out, STOP is seen within 30 s.
+{
+  const books = makeBooks(true);
+  const client = makeClient(books, { pickQuote: fromKta("0.006"), payoutQuote: fromKta("0.00404") });
+  const realQ = client.getQuotes.bind(client);
+  client.getQuotes = async (blocks) => (blocks.some((b) => (b.operations ?? []).some((o) => o.token?.id === "kore")) ? realQ(blocks) : null);
+  const time = { t: start };
+  const dir = makeDir({ books, send: true, state: baseState({ closeOpen: true }) });
+  let stopAt = null;
+  const r = await tick(dir, client, time, 40, ({ sleeps, dir: d, time: tm }) => { if (sleeps.length === 6 && stopAt === null) { stopAt = tm.t; writeFileSync(join(d, "STOP"), "x\n"); } });
+  check("B5 no quote: no 10 min sleep in the loop, and a due payout still goes out", !r.sleeps.includes(600_000) && Math.max(...r.sleeps) <= 120_000 && pays(client).length >= 1, JSON.stringify(r.sleeps));
+  check("B5 no quote: STOP is seen at the next loop (no long sleep after it)", stopAt !== null && r.sleeps.length === 6 && time.t === stopAt, JSON.stringify(r.sleeps));
+}
+
+// r2 (nit): HALT is checked every loop.
+{
+  const time = { t: start };
+  const { books, client } = fuelled(time);
+  const dir = makeDir({ books });
+  let at = null;
+  const r = await tick(dir, client, time, 60, ({ client: c, dir: d }) => { if (at === null && picks(c).length >= 5) { at = picks(c).length; writeFileSync(join(d, "HALT"), "x\n"); } });
+  check("r2 HALT appearing mid-run stops the loop with no further publish", at === 5 && picks(client).length === 5 && r.logs.includes("HALT file present. Stopping."), `${at} ${picks(client).length}`);
+}
+
+// r2 (nit): a corrupt state.json fails safe into RATEHOLD instead of resetting the count.
+{
+  const books = makeBooks(false);
+  const client = makeClient(books, { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
+  const time = { t: start };
+  const bad = '{"recent":[[' + (start - 60000) + ',58]],"windowStart":';
+  const dir = makeDir({ books, files: { "state.json": bad } });
+  const r = await tick(dir, client, time, 6);
+  check("r2 corrupt state.json writes RATEHOLD, one ALERT, publishes nothing, keeps a copy", has(dir, "RATEHOLD") && client.publishes.length === 0 && alerts(r.errors).length === 1 && readFileSync(join(dir, "state.json.bad"), "utf8") === bad, r.errors.join("\n"));
+  const dir2 = makeDir({ books: makeBooks(false) });
+  const c2 = makeClient(makeBooks(false), { pickQuote: fromKta("0.006"), voteFee: fromKta("0.006") });
+  await tick(dir2, c2, { t: start }, 6);
+  check("r2 a missing state.json is a normal first start (no RATEHOLD)", !has(dir2, "RATEHOLD") && picks(c2).length >= 1);
+}
+
+// r2 (nit): an entry over 100 blocks is capped at 100, not dropped; odd counts round up.
+{
+  const { pruneRecent } = await import("./pace.mjs");
+  check("r2 pruneRecent caps 150 at 100 and rounds 2.5 up to 3", JSON.stringify(pruneRecent([[start, 150], [start, 2.5]], start)) === JSON.stringify([[start, 100], [start, 3]]) && blocksInHour([[start, 150]], start) === 100);
+}
+
+// r2 (nit): status.json's block count follows the rolling count, not only state changes.
+{
+  const time = { t: start };
+  const { books, client } = fuelled(time);
+  const dir = makeDir({ books });
+  await tick(dir, client, time, 12);
+  const st = status(dir);
+  const live = blocksInHour(state(dir).recent, time.t);
+  check("r2 status.json blocksLastHour matches the saved rolling count while picks run", st && st.reason === "picks on" && live >= 10 && st.blocksLastHour === live, `${JSON.stringify(st)} live ${live}`);
 }
 
 // No refund path anywhere in the runner, and the runner never removes a hold file.

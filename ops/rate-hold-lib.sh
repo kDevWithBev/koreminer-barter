@@ -26,8 +26,12 @@ holds() { local h="" f; for f in STOP HALT PAYHOLD FEEHOLD RATEHOLD payout-inten
 # procs: "<run.mjs count> <refund.mjs count> <run.mjs pids>" from /proc/*/cmdline (argument names only).
 procs() { local r=0 q=0 ids="" p a; for p in /proc/[0-9]*; do while IFS= read -r -d "" a; do case "${a##*/}" in run.mjs) r=$((r+1)); ids="$ids${ids:+,}${p##*/}"; break;; refund.mjs) q=$((q+1)); break;; esac; done 2>/dev/null < $p/cmdline || true; done; echo "$r $q ${ids:-none}"; }
 nodebin() { local mp n; mp=$(systemctl show -p MainPID --value koreminer </dev/null || true); n=""; [ -n "$mp" ] && [ "$mp" != 0 ] && n=$(readlink -f /proc/$mp/exe 2>/dev/null || true); case "${n##*/}" in node*) echo "$n";; *) echo none;; esac; }
-# confok: fee.conf has each ceiling line exactly once (PICKS_OFF is checked by picks).
-confok() { local l c; for l in FEE_CAP_PER_BUNDLE_KTA=0.05 MAX_BLOCKS_PER_HOUR=60 PAYOUT_FEE_CAP_KTA=0.05 PAYOUT_FEE_BUDGET_KTA_PER_DAY=0.5; do c=$(grep -cx "Environment=$l" $FC 2>/dev/null || true); [ "${c:-0}" = 1 ] || { echo "fee.conf line Environment=$l found ${c:-0} times"; return 1; }; done; return 0; }
+# confok: fee.conf has each ceiling line exactly once (PICKS_OFF is checked by picks), and the unit restarts
+# only on failure (STOP, HALT and a clean stop exit 0; Restart=always would loop them).
+unitfacts() { local k; for k in Restart RestartUSec StartLimitBurst; do printf "%s=%s " $k "$(systemctl show -p $k --value koreminer </dev/null || true)"; done; echo; }
+confok() { local l c
+  [ "$(systemctl show -p Restart --value koreminer </dev/null)" = on-failure ] || { LEFT="unit Restart is not on-failure"; echo "$LEFT"; return 1; }
+  for l in FEE_CAP_PER_BUNDLE_KTA=0.05 MAX_BLOCKS_PER_HOUR=60 PAYOUT_FEE_CAP_KTA=0.05 PAYOUT_FEE_BUDGET_KTA_PER_DAY=0.5; do c=$(grep -cx "Environment=$l" $FC 2>/dev/null || true); [ "${c:-0}" = 1 ] || { echo "fee.conf line Environment=$l found ${c:-0} times"; return 1; }; done; return 0; }
 mainpid() { systemctl show -p MainPID --value koreminer </dev/null || echo 0; }
 nrest() { systemctl show -p NRestarts --value koreminer </dev/null || echo x; }
 # guard <live|stopped>: picks off, no hold or refund file, and the right runner processes.
@@ -41,11 +45,11 @@ guard() {
   else [ "$1" = 0 ] || { LEFT="$1 run.mjs process(es) already alive ($3)"; return 1; }; fi
   return 0
 }
-# timeok: not in quiet hours (10 pm to 5 am ET) and not in the close window (7:30 to 8:45 pm ET).
+# timeok: not in quiet hours (10 pm to 5 am ET) and not in the close window (7 to 8:45 pm ET, as the doc says).
 timeok() {
   local h m; h=$(TZ=America/New_York date +%H); m=$(TZ=America/New_York date +%H%M)
   { [ "$h" -ge 22 ] || [ "$h" -lt 5 ]; } && fail0 "Quiet hours (10 pm to 5 am ET). Nothing changed."
-  { [ "$m" -ge 1930 ] && [ "$m" -lt 2045 ]; } && fail0 "Close window (7:30 to 8:45 pm ET, now $(TZ=America/New_York date +%H:%M)). Nothing changed. Run it after 8:45 pm ET or tomorrow."
+  { [ "$m" -ge 1900 ] && [ "$m" -lt 2045 ]; } && fail0 "Close window (7 to 8:45 pm ET, now $(TZ=America/New_York date +%H:%M)). Nothing changed. Run it after 8:45 pm ET or tomorrow."
   return 0
 }
 jl() { journalctl -u koreminer --since "$1 UTC" --no-pager -o cat </dev/null || true; }
@@ -63,8 +67,9 @@ health() {
   done
   echo "${1:-unreadable} stale"
 }
-# status.json: print state and reason only (it holds no secrets by design).
-stat1() { ${NODE:-node} -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(s.state+" | "+s.reason+" | blocks last hour "+s.blocksLastHour+" of "+s.limit)}catch{console.log("none")}' $D/status.json 2>/dev/null || echo none; }
+# status.json: print state and reason only (it holds no secrets by design). "stale" unless written at or after
+# this start (T0, set by startcheck), so a file left by an earlier run never passes.
+stat1() { local m; m=$(stat -c %Y $D/status.json 2>/dev/null || echo 0); [ "${m:-0}" -ge "${T0:-9999999999}" ] || { echo "stale (not written since this start)"; return 0; }; ${NODE:-node} -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(s.state+" | "+s.reason+" | blocks last hour "+s.blocksLastHour+" of "+s.limit)}catch{console.log("none")}' $D/status.json 2>/dev/null || echo none; }
 # stopnow: plain start-again trap, stop, and refuse if a payout started at the stop.
 stopnow() {
   trap 'echo "interrupted: starting the runner again, unchanged"; systemctl start koreminer </dev/null; echo "${X}_FAIL"; exit 1' ERR HUP INT TERM
@@ -77,8 +82,8 @@ stopnow() {
 # startcheck <new|old> <Picks off|Picks on> [fee]:  start once, wait for Runner up, warm-up, then check (with fee, an ALERT or FEEHOLD is left to the box). Sets SC to ok or to the reason it is not ok. Call it directly, not in $(...).
 startcheck() {
   local L U N0 c; SC=""
-  T=$(date -u +"%Y-%m-%d %H:%M:%S"); HS=$(date -u -d "$T UTC" +%s)  # T and HS stay set for the box
-  systemctl start koreminer </dev/null; N0=$(nrest); U=$(waitup "$T")
+  T=$(date -u +"%Y-%m-%d %H:%M:%S"); HS=$(date -u -d "$T UTC" +%s)  # T, HS and T0 stay set for the box
+  T0=$(date +%s); systemctl start koreminer </dev/null; N0=$(nrest); U=$(waitup "$T")
   echo "runner started at $T UTC, Runner up lines $U, restart count $N0"
   [ "$U" -ge 1 ] || { SC="no Runner up line within 60 seconds"; return 0; }
   echo "warm-up 20 seconds"; sleep 20
@@ -94,4 +99,18 @@ startcheck() {
   claimok || echo "note: claim service /health is not ok. The claim service is separate and this change does not touch it; send this to Forge."
   printf "%s\n" "$L" | grep -E "^Config fee cap|^Runner up|^Picks off|^Fee check|^SKIP|^Paused|ALERT" | cut -c1-230 | tail -n 5 || true
   SC=ok
+}
+# rb: STEP3 auto-rollback to 7ee5308 (set +e). Copies only when the unit really stopped and no STOP, RATEHOLD or
+# FEEHOLD is present: the rate-hold version honours those files and the old code would not, so it is kept.
+rb() {
+  local st f; trap - ERR HUP INT TERM; set +e; echo "something failed, putting 7ee5308 back (state, books and hold files are not touched)"
+  systemctl stop koreminer </dev/null; sleep 3; st=$(systemctl is-active koreminer </dev/null)
+  [ "$st" = inactive ] || [ "$st" = failed ] || { echo "RUNNER_CHECK_FAILED: the runner did not stop (state $st), so nothing was put back. Do not start or stop it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }
+  for f in STOP RATEHOLD FEEHOLD; do [ -e $D/$f ] && { echo "STOPPED_FOR_REVIEW: $f is present, so the rate-hold version was kept (it honours $f, the old code would not) and the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }; done
+  cp -p $B/run.mjs $B/pace.mjs $D/
+  vers "$OLD" || { echo "STOPPED_FOR_REVIEW: run.mjs or pace.mjs is not 7ee5308 after the restore, so the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ${X}_FAIL; exit 1; }
+  GM=stopped; guard || { echo "STOPPED_FOR_REVIEW: $LEFT. Files are back on 7ee5308 but the runner was not started. Do not start it by hand. Send this whole output to Forge and KeeLend Ops now."; echo ROLLED_BACK_TO_7EE5308; echo ${X}_FAIL; exit 1; }
+  startcheck old "Picks off"; echo "runner on 7ee5308: $(systemctl is-active koreminer </dev/null), check: $SC"
+  [ "$SC" = ok ] || echo "RUNNER_CHECK_FAILED: $SC. Do not start or stop it by hand. Send this whole output to Forge now."
+  echo ROLLED_BACK_TO_7EE5308; echo ${X}_FAIL; exit 1
 }
