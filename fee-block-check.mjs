@@ -92,20 +92,14 @@ function setEnv(env) {
 }
 
 async function loadSdk() {
-  const file = "/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/client/index.js";
-  const attempts = ["@keetanetwork/keetanet-client", file];
-  for (const spec of attempts) {
-    try {
-      const mod = await import(spec);
-      let version = "";
-      try {
-        if (spec.startsWith("@")) version = createRequire(import.meta.url)(`${spec}/package.json`).version;
-        else version = JSON.parse(readFileSync("/tmp/keeta-0188/node_modules/@keetanetwork/keetanet-client/package.json", "utf8")).version;
-      } catch { version = ""; }
-      if (version === "0.18.8") return mod.default ?? mod;
-    } catch { /* try the next place */ }
+  try {
+    const version = createRequire(import.meta.url)("@keetanetwork/keetanet-client/package.json").version;
+    if (version !== "0.18.7") return null;
+    const mod = await import("@keetanetwork/keetanet-client");
+    return mod.default ?? mod;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 try {
@@ -434,7 +428,7 @@ try {
 
   const sdk = await loadSdk();
   if (!sdk?.lib?.Block || !sdk?.lib?.Account) {
-    check("real SDK block case skipped", true);
+    console.log("fee-block-check skipped: @keetanetwork/keetanet-client 0.18.7 could not be imported");
   } else {
     sdkRan = true;
     const { Account, Block } = sdk.lib;

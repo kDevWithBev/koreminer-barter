@@ -1,0 +1,90 @@
+{
+  "lastMs": 1791590400000,
+  "reserve": "2000000000000000000",
+  "operator": "1066006000000000000",
+  "cursor": "BOOKS-CANARY-7Q",
+  "recent": [],
+  "pendingDrops": [],
+  "pendingSince": 0,
+  "arm": 1791590400000,
+  "lots": [
+    {
+      "from": "keeta_aabd7qpxd6li6qwkyr4qjlzao7fu6wadr6pwhekxmem2iqtsb27wn5yphdqyv5y",
+      "remaining": "9709000000000000000000"
+    },
+    {
+      "from": "keeta_aab3cujp6bgzzzbacn3eyslyzt432cnqs3zbc4mbqqwcpgywfeaomtasbbyvdmi",
+      "remaining": "1265237950000000000000"
+    },
+    {
+      "from": "keeta_aab6z3pj5ywg75f725a3kdyiawwvsupsgcjzukjmjy2ybpqriqdt4a5sks4ocuq",
+      "remaining": "1390000000000000000000"
+    },
+    {
+      "from": "keeta_aabemrl47xovglalhxxxlfekjd2lz2aioxldryd3zkdafxk3mc4x4ojudtc76fq",
+      "remaining": "650000000000000000000"
+    },
+    {
+      "from": "keeta_aabsq7gbfu3uw6jfzmnr4bdvdofftk6k2a5apuhvhofjfetobm4nnbcz6umww7a",
+      "remaining": "851638650000000000000"
+    },
+    {
+      "from": "keeta_aab2mszmbqiifrxb3245tpwitotec7mqowxywxzdvs7agh5x47xez5nfkiufvvi",
+      "remaining": "300000000000000000000"
+    },
+    {
+      "from": "keeta_aabal6jl7dgl3xa6dkzehkbzmzuch3h5yjbmkijyo6vra6xjgzrpfv7gftdkgoy",
+      "remaining": "133000000000000000000"
+    },
+    {
+      "from": "keeta_aabjln6pehydbh5aggj5dsujwjci4aez7ih7tsbwzk4gmsppzuj5g2u5xch4ddi",
+      "remaining": "100000000000000000000"
+    },
+    {
+      "from": "keeta_aabffpbw6wyeyijyqz4qzmm2aatofkpkkffbetglqniohdxc4opr7i6panndway",
+      "remaining": "90000000000000000000"
+    },
+    {
+      "from": "keeta_aabik63e6x7svkclg74scrqe373rhy5v4xtbp7lx7wcbkrdk2evpiqcl3cihd2i",
+      "remaining": "862000000000000000000"
+    },
+    {
+      "from": "keeta_aabz6zxbs2n4r7iiobclndobrnowxdf4pjrb5lwe6bvpeo564bot6krjbrsbbvy",
+      "remaining": "850000000000000000000"
+    },
+    {
+      "from": "keeta_aqltdal4rshtky5iehd765y3mdjkcmku5d4ulo5fgonzqrxulwepnogq33mle",
+      "remaining": "11000000000000000000"
+    }
+  ],
+  "stake": {
+    "keeta_aabd7qpxd6li6qwkyr4qjlzao7fu6wadr6pwhekxmem2iqtsb27wn5yphdqyv5y": "9709000000000000000000",
+    "keeta_aab3cujp6bgzzzbacn3eyslyzt432cnqs3zbc4mbqqwcpgywfeaomtasbbyvdmi": "1265237950000000000000",
+    "keeta_aab6z3pj5ywg75f725a3kdyiawwvsupsgcjzukjmjy2ybpqriqdt4a5sks4ocuq": "1390000000000000000000",
+    "keeta_aabemrl47xovglalhxxxlfekjd2lz2aioxldryd3zkdafxk3mc4x4ojudtc76fq": "650000000000000000000",
+    "keeta_aabsq7gbfu3uw6jfzmnr4bdvdofftk6k2a5apuhvhofjfetobm4nnbcz6umww7a": "851638650000000000000",
+    "keeta_aab2mszmbqiifrxb3245tpwitotec7mqowxywxzdvs7agh5x47xez5nfkiufvvi": "300000000000000000000",
+    "keeta_aabal6jl7dgl3xa6dkzehkbzmzuch3h5yjbmkijyo6vra6xjgzrpfv7gftdkgoy": "133000000000000000000",
+    "keeta_aabjln6pehydbh5aggj5dsujwjci4aez7ih7tsbwzk4gmsppzuj5g2u5xch4ddi": "100000000000000000000",
+    "keeta_aabffpbw6wyeyijyqz4qzmm2aatofkpkkffbetglqniohdxc4opr7i6panndway": "90000000000000000000",
+    "keeta_aabik63e6x7svkclg74scrqe373rhy5v4xtbp7lx7wcbkrdk2evpiqcl3cihd2i": "862000000000000000000",
+    "keeta_aabz6zxbs2n4r7iiobclndobrnowxdf4pjrb5lwe6bvpeo564bot6krjbrsbbvy": "850000000000000000000",
+    "keeta_aqltdal4rshtky5iehd765y3mdjkcmku5d4ulo5fgonzqrxulwepnogq33mle": "11000000000000000000"
+  },
+  "pending": {},
+  "paid": {},
+  "depth": {
+    "keeta_aabbhuaqbv5tjc25hrih6aqqel4g5fh2c6lhpmjkcxrk2xind2zft2nvhom2fwi": "1000000000000000000",
+    "keeta_aabalimmuxvjq5jvkvpgcnmsmyi4pwpduscrwn263pwlcib4xzpp5pnrdwng4yq": "1000000000000000000",
+    "keeta_aabiilnj6yja3g4j7dbn2kkxwcaxq3tdzjvm6kwgare52fsy2dzabekxgeqerki": "1000000000000000000",
+    "keeta_aabjveq4wsqzhj27avkdikxn3lwo5zhcv2xt6kqgwk4b55yzfaacrlmww45lu4y": "1000000000000000000",
+    "keeta_aabrmmctfikuanrdtlimnedov5bcshc2hmyrjlvqy5h2cvfwntlrkp6cquzakja": "1000000000000000000",
+    "keeta_aabdkkc2fkbj2opullbe34ohrrzdeej3mkx4szevk42mkhz6yfmmi5iupcdsvca": "210000000000000000000"
+  },
+  "seen": [],
+  "streak": {},
+  "parked": "0",
+  "unresolved": [],
+  "used": [],
+  "lookupSince": {}
+}
