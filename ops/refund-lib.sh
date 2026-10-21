@@ -107,6 +107,7 @@ restart() { local s t w
   [ "$(systemctl is-active koreminer </dev/null || true)" = active ] && { echo "runner is already active"; return 0; }
   s=$(rstate); echo "refund state: $s"
   case "$s" in EMPTY*|B1_VERIFIED*|B2_VERIFIED*) ;; *) echo "STOPPED_FOR_REVIEW: refund state needs review ($s). Do not start the runner by hand. Send this whole output to Forge and KeeLend Ops."; return 1;; esac
+  set -- $(procs); [ "$1 $2" = "0 0" ] || { echo "STOPPED_FOR_REVIEW: $1 run.mjs and $2 refund.mjs process(es) alive. Do not start the runner by hand. Send this whole output to Forge and KeeLend Ops."; return 1; }
   if [ -e $D/STOP ]; then
     if [ "${s%% *}" != EMPTY ] && [ "$(head -c 40 $D/STOP | tr -cd '[:print:]')" = "refund in progress" ] && [ "$(wc -c < $D/STOP)" = 19 ]; then rm -f $D/STOP; echo "removed the refund's own STOP (batches verified)"
     else echo "STOPPED_FOR_REVIEW: STOP is present and is not a verified refund's own STOP. Do not start the runner by hand. Send this to Forge."; return 1; fi
