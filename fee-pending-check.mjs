@@ -81,7 +81,9 @@ const expired = await runCase({
   books: expBooks,
   client: expClient,
   send: true,
-  steps: 8,
+  // fix/rate-hold: an over-cap pick recover now writes FEEHOLD and waits in 10 s steps (no backoff ladder),
+  // so it takes more loop steps to reach the 6 minute expiry.
+  steps: 60,
   clock: start,
   intent: expIntent,
   state: {

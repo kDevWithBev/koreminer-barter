@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, copyFileSync, unlinkSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, bundleCap, configLine, judgeQuote, kta, minPublishGapMs, pace, payoutFeeBudget, payoutFeeCap, picksOff } from "./pace.mjs";
+import { BLOCK_FEE, DAY_MS, FEE_PER_TX, FeeOverCap, blocksInHour, bundleCap, configLine, judgeQuote, kta, maxBlocksPerHour, minPublishGapMs, pace, payoutFeeBudget, payoutFeeCap, picksOff, pruneRecent } from "./pace.mjs";
 import { RESERVE, accrue, due } from "./share.mjs";
 import { dayStart } from "./ledger.mjs";
 import { booksFromJson, booksToJson, ingest, notePublished, payoutPlan, publicBooks, reconcile } from "./books.mjs";
@@ -214,6 +214,91 @@ export async function runShaft({
     writeState(state);
   }
 
+  // Holds. FEEHOLD pauses picks (payouts keep their own cap and budget). RATEHOLD pauses every publish.
+  // Only a person removes them. A trip only pauses; it never sends anything back.
+  const statusPath = `${dir}/status.json`;
+  const feeHoldPath = `${dir}/FEEHOLD`;
+  const rateHoldPath = `${dir}/RATEHOLD`;
+  let feeChecked = false;
+  let feeSkipNoted = "";
+  let feeSkipAt = null;
+  let pausedNoted = "";
+  let pausedNotedAt = null;
+  let lastStatus = (() => {
+    try {
+      const saved = JSON.parse(readFileSync(statusPath, "utf8"));
+      return typeof saved.state === "string" && typeof saved.reason === "string" ? `${saved.state}|${saved.reason}` : "";
+    } catch {
+      return "";
+    }
+  })();
+
+  function holdReason(path) {
+    try {
+      const text = readFileSync(path, "utf8").split("\n")[0].replace(/[^ -~]/g, "").slice(0, 200);
+      return text || "no reason given";
+    } catch {
+      return "unreadable";
+    }
+  }
+
+  function writeStatus(name, reason) {
+    const key = `${name}|${reason}`;
+    if (key === lastStatus) return;
+    if (lastStatus.startsWith("paused|") && name === "running") console.log("Resumed.");
+    lastStatus = key;
+    const at = now();
+    try {
+      writeJson(statusPath, { state: name, reason, since: new Date(at).toISOString(), blocksLastHour: blocksInHour(state.recent, at), limit: maxBlocksPerHour() });
+    } catch { /* the runner goes on; the hold file and the journal line still stand */ }
+  }
+
+  function notePaused(reason, tail) {
+    const at = now();
+    if (reason === pausedNoted && pausedNotedAt !== null && at - pausedNotedAt < 10 * 60 * 1000) return;
+    pausedNoted = reason;
+    pausedNotedAt = at;
+    console.log(`Paused: ${reason}. ${tail}`);
+  }
+
+  function picksPaused() {
+    return picksOff() || existsSync(feeHoldPath);
+  }
+
+  function tripFee(fee, nonKta) {
+    feeChecked = false;
+    const what = nonKta ? "a non-KTA fee was quoted" : `fee ${kta(fee)} KTA a block is over the ${kta(bundleCap())} KTA cap`;
+    if (!existsSync(feeHoldPath)) {
+      writeFileSync(feeHoldPath, `${what} at ${new Date(now()).toISOString()}. Ask Keeta before removing this file.\n`);
+      console.error(`ALERT ${nonKta ? "Non-KTA fee selected" : `Fee ${kta(fee)} KTA is over the ${kta(bundleCap())} KTA cap`}. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.`);
+    }
+    writeStatus("paused", `FEEHOLD: ${holdReason(feeHoldPath)}`);
+  }
+
+  function tripRate(used, n, limit, what) {
+    const reason = `${used} ledger blocks in the last hour, the next ${what} (${n}) would pass the ${limit} an hour cap, at ${new Date(now()).toISOString()}`;
+    writeFileSync(rateHoldPath, `${reason}. Remove this file only after review.\n`);
+    console.error(`ALERT Rate cap: ${used} ledger blocks in the last hour, the next ${what} would pass ${limit}. All publishing paused (RATEHOLD). Remove RATEHOLD only after review.`);
+    writeStatus("paused", `RATEHOLD: ${holdReason(rateHoldPath)}`);
+  }
+
+  // Hard rolling-hour count of ledger blocks, taken before every publish and saved first,
+  // so a publish whose result is unknown still counts.
+  function takeBlocks(n, what) {
+    if (existsSync(rateHoldPath)) return false;
+    const at = now();
+    state.recent = pruneRecent(state.recent, at);
+    const used = blocksInHour(state.recent, at);
+    const limit = maxBlocksPerHour();
+    if (used + n > limit) {
+      tripRate(used, n, limit, what);
+      return false;
+    }
+    state.recent.push([at, n]);
+    writeState(state);
+    return true;
+  }
+
   function feeSum(quote) {
     const picked = selectFee(quote?.fee, { base, baseText });
     if (picked.kind === "foreign") return { kta: 0n, foreign: picked.amount, refused: true, usable: true };
@@ -380,9 +465,10 @@ export async function runShaft({
         lastPublishMs: Number(saved.lastPublishMs) || 0,
         payoutFeeDay: typeof saved.payoutFeeDay === "string" ? saved.payoutFeeDay : "",
         payoutFeeSpent: clampPayoutSpent(saved.payoutFeeSpent),
+        recent: pruneRecent(saved.recent, now()),
       };
     } catch {
-      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0, payoutFeeDay: "", payoutFeeSpent: 0n };
+      return { windowStart: now(), spent: 0n, feePerTx: FEE_PER_TX, payoutDay: "", done: [], closeOpen: false, lastPublishMs: 0, payoutFeeDay: "", payoutFeeSpent: 0n, recent: [] };
     }
   }
 
@@ -475,6 +561,7 @@ export async function runShaft({
       lastPublishMs: state.lastPublishMs || 0,
       payoutFeeDay: state.payoutFeeDay ?? "",
       payoutFeeSpent: (state.payoutFeeSpent ?? 0n).toString(),
+      recent: Array.isArray(state.recent) ? state.recent : [],
     });
     writeFileSync(`${statePath}.tmp`, body);
     renameSync(`${statePath}.tmp`, statePath);
@@ -655,7 +742,7 @@ export async function runShaft({
     }
     const payout = isPendingPayout(pending);
     // Payouts can stall for up to about 6 minutes while a pending pick block expires.
-    if (picksOff() && !payout) {
+    if (picksPaused() && !payout) {
       noteLeftPick(pending);
       return "wait";
     }
@@ -690,6 +777,10 @@ export async function runShaft({
       }
       if (quotes != null && quoted.foreign) {
         noteRefusedFees(quotes);
+        if (!payout) {
+          tripFee(quoted.shown, true);
+          return "wait";
+        }
         throw nonKtaError(quoted.shown, cap);
       }
       if (quotes != null && !quoted.usable) {
@@ -698,8 +789,13 @@ export async function runShaft({
       }
       if (quoted.amount > cap) {
         noteRefusedFees(quotes);
+        if (!payout) {
+          tripFee(quoted.amount, false);
+          return "wait";
+        }
         throw new FeeOverCap(quoted.amount, cap);
       }
+      if (!takeBlocks(Math.max(blocks.length, 1) + 1, payout ? "payout" : "signed block")) return "wait";
       const { generateFeeBlock, taken } = cappedFeeBlock(cap);
       const recovered = await client.recover(true, { generateFeeBlock, quotes });
       if (recovered == null) return false;
@@ -728,6 +824,10 @@ export async function runShaft({
       const message = err instanceof Error ? err.message : "unknown";
       if (message.includes("enough voting power") || message.includes("INSUFFICIENT_VOTING_WEIGHT")) {
         console.log("Leaving the short block. It cannot gather enough votes.");
+        return "wait";
+      }
+      if (!payout && isOverCap(err)) {
+        tripFee(err.fee ?? 0n, err.nonKta === true);
         return "wait";
       }
       throw err;
@@ -770,7 +870,7 @@ export async function runShaft({
     }
   }
 
-  console.log(configLine());
+  console.log(configLine(blocksInHour(state.recent, now())));
   console.log("Runner up. Pace follows fuel. Ceiling 17/s. Reserve", kta(RESERVE), "KTA.", sendArmed() ? "KORE send is armed." : "KORE send is off.");
   console.log(closeAccrue ? "Close accrue on" : "Close accrue off");
   console.log("Dust sink:", sink);
@@ -956,6 +1056,7 @@ function settlePayout(koreBal) {
       console.log("Skip KORE. Amount does not fit.", row.from);
       return "skip";
     }
+    if (!takeBlocks(built.blocks.length + 1, "payout")) return "queued";
     const intent = { from: row.from, amount: row.amount.toString(), key: row.key, floor: floor.toString() };
     writeJson(intentPath, intent);
     writeFileSync(floorPath, `${floor.toString()}\n`, { mode: 0o600 });
@@ -1013,11 +1114,20 @@ function settlePayout(koreBal) {
           lastPublishMs: state.lastPublishMs || 0,
           payoutFeeDay: state.payoutFeeDay ?? "",
           payoutFeeSpent: state.payoutFeeSpent ?? 0n,
+          recent: Array.isArray(state.recent) ? state.recent : [],
         };
         writeState(state);
         console.log("New day. Pace window reset.");
       }
       rollPayoutFeeDay();
+      if (existsSync(rateHoldPath)) {
+        const why = holdReason(rateHoldPath);
+        notePaused(`RATEHOLD ${why}`, "Nothing publishes.");
+        writeStatus("paused", `RATEHOLD: ${why}`);
+        feeChecked = false;
+        await sleep(30000);
+        continue;
+      }
 
       const chain = await syncChain(books);
       if (chain === "halt-reserve") {
@@ -1081,7 +1191,15 @@ function settlePayout(koreBal) {
         continue;
       }
 
-      if (picksOff()) {
+      if (picksPaused()) {
+        feeChecked = false;
+        if (existsSync(feeHoldPath)) {
+          const why = holdReason(feeHoldPath);
+          notePaused(`FEEHOLD ${why}`, "Picks paused. Payouts still run.");
+          writeStatus("paused", `FEEHOLD: ${why}`);
+        } else {
+          writeStatus("running", "picks off");
+        }
         const koreNow = await client.balance(kore);
         if (koreNow > koreStart) {
           console.log("Extra KORE ignored.", koreNow.toString());
@@ -1137,13 +1255,46 @@ function settlePayout(koreBal) {
         continue;
       }
       await pauseForRate();
-      const quotes = await client.getQuotes(built.blocks);
+      let quotes;
+      try {
+        quotes = await client.getQuotes(built.blocks);
+      } catch (err) {
+        if (feeChecked) throw err;
+        quotes = undefined;
+      }
       const quoted = quotes == null
         ? { amount: 0n, foreign: false, shown: 0n, usable: false }
         : quotesFee(quotes);
+      if (!feeChecked) {
+        // Pre-start fee check on the real quote path. Quote only; fails closed.
+        let why = "";
+        if (quotes == null || quotes.length === 0 || !quoted.usable) why = "no usable fee quote";
+        else if (quoted.foreign) why = "the quote is not in KTA";
+        else if (quoted.amount > bundleCap()) why = `fee ${kta(quoted.amount)} KTA a block is over the ${kta(bundleCap())} KTA cap`;
+        if (why) {
+          const at = now();
+          if (why !== feeSkipNoted || feeSkipAt === null || at - feeSkipAt >= 10 * 60 * 1000) {
+            feeSkipNoted = why;
+            feeSkipAt = at;
+            console.log(`SKIP: ${why}. Picks not started.`);
+          }
+          if (quotes != null && quoted.foreign) tripFee(quoted.shown, true);
+          else if (quotes != null && quoted.usable && quoted.amount > bundleCap()) tripFee(quoted.amount, false);
+          else {
+            writeStatus("running", `picks waiting: ${why}`);
+            await sleep(10 * 60 * 1000);
+          }
+          continue;
+        }
+        feeChecked = true;
+        feeSkipNoted = "";
+        console.log(`Fee check ok: ${kta(quoted.amount)} KTA a block, cap ${kta(bundleCap())} KTA. Picks start.`);
+        writeStatus("running", "picks on");
+      }
       if (quoted.foreign) {
         noteRefusedFees(quotes);
-        throw nonKtaError(quoted.shown, bundleCap());
+        tripFee(quoted.shown, true);
+        continue;
       }
       if (!quoted.usable) {
         noteRefusedFees(quotes);
@@ -1161,7 +1312,8 @@ function settlePayout(koreBal) {
         if (!judged.ok) {
           if (judged.reason === "cap") {
             noteRefusedFees(quotes);
-            throw new FeeOverCap(total, bundleCap());
+            tripFee(total, false);
+            continue;
           }
           state.feePerTx = judged.learn;
           writeState(state);
@@ -1172,8 +1324,21 @@ function settlePayout(koreBal) {
         state.feePerTx = judged.learn;
       }
 
+      if (!takeBlocks(built.blocks.length + 1, "pick")) {
+        await sleep(30000);
+        continue;
+      }
       const before = await client.balance(base);
-      const published = await publishCapped(builder, quotes);
+      let published;
+      try {
+        published = await publishCapped(builder, quotes);
+      } catch (err) {
+        if (isOverCap(err)) {
+          tripFee(err.fee ?? 0n, err.nonKta === true);
+          continue;
+        }
+        throw err;
+      }
       clearEpisode();
       const after = await client.balance(base);
       const drop = before > after ? before - after : total;

@@ -10,7 +10,7 @@ import { FEE_PER_TX } from "./pace.mjs";
 const start = Date.parse("2026-10-18T15:00:00.000Z");
 const CAP_ALERT = "ALERT Payout fee 0.06000 KTA is over the 0.05000 KTA payout cap. Payout stays queued.";
 const BUDGET_ALERT = "ALERT Payout fee budget for today is used up (0.00404 of 0.00404 KTA). Payouts wait until the next UTC day.";
-const EXAMPLE = "Config fee cap 0.05000 KTA. Payout fee cap 5.00000 KTA. Payout fee budget 80.00000 KTA a day. Max 60 blocks an hour. Picks off.";
+const EXAMPLE = "Config fee cap 0.05000 KTA. Payout fee cap 0.05000 KTA. Payout fee budget 0.50000 KTA a day. Max 60 blocks an hour. (clamped from payout cap 5.00000 KTA, payout budget 80.00000 KTA) Hard limits 0.05000 KTA a block, 60 ledger blocks an hour, payout 0.05000 KTA a block and 0.50000 KTA a day. Picks off.";
 let passed = 0;
 function check(name, ok, extra = "") {
   if (!ok) throw new Error(`${name}${extra ? `\n${extra}` : ""}`);
@@ -73,9 +73,12 @@ try {
   check("the payout cap defaults to 0.05", payoutFeeCap() === fromKta("0.05"));
   check("the payout budget defaults to 0.5", payoutFeeBudget() === fromKta("0.5"));
   setEnv({ cap: "11", budget: "150" });
-  check("a payout cap of 11 clamps to 10", payoutFeeCap() === fromKta("10"));
-  check("a payout budget of 150 clamps to 100", payoutFeeBudget() === fromKta("100"));
-  check("a clamped payout cap is logged", configLine().includes("Payout fee cap 10.00000 KTA.") && configLine().includes("payout cap 11.00000 KTA") && configLine().includes("payout budget 150.00000 KTA"));
+  // fix/rate-hold: hard payout ceilings at today's values, 0.05 KTA a block and 0.5 KTA a day.
+  check("a payout cap of 11 clamps to the hard 0.05", payoutFeeCap() === fromKta("0.05"));
+  check("a payout budget of 150 clamps to the hard 0.5", payoutFeeBudget() === fromKta("0.5"));
+  check("a clamped payout cap is logged", configLine().includes("Payout fee cap 0.05000 KTA.") && configLine().includes("payout cap 11.00000 KTA") && configLine().includes("payout budget 150.00000 KTA"));
+  setEnv({ cap: "0.01", budget: "0.2" });
+  check("the env can lower the payout cap and budget", payoutFeeCap() === fromKta("0.01") && payoutFeeBudget() === fromKta("0.2"));
   setEnv({ cap: "nope", budget: "-3" });
   check("a bad payout cap uses the default", payoutFeeCap() === fromKta("0.05"));
   check("a negative payout budget uses the default", payoutFeeBudget() === fromKta("0.5"));
@@ -158,7 +161,7 @@ try {
     steps: 1,
     clock: start,
   });
-  check("a 0.06 pick is still refused when the payout cap is 5", pick.client.publishes.length === 0 && pick.client.feeBlockBuilds === 0 && pick.errors.some((line) => line === "ALERT Fee 0.06000 KTA is over the 0.05000 KTA cap. Backing off."), pick.errors.join("\n"));
+  check("a 0.06 pick is still refused when the payout cap is 5", pick.client.publishes.length === 0 && pick.client.feeBlockBuilds === 0 && pick.errors.some((line) => line === "ALERT Fee 0.06000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD."), pick.errors.join("\n"));
 } finally {
   setEnv(saved);
 }

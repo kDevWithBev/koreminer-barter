@@ -30,7 +30,8 @@ const ran = await runCase({
     if (sleeps.length === 1 && corrected === null) corrected = Number(readState(dir).lastPublishMs);
   },
 });
-check("a future publish time waits one gap", ran.sleeps[0] <= 60_000, String(ran.sleeps[0]));
+// fix/rate-hold: the gap is 120 s (60 ledger blocks an hour, 2 blocks a publish).
+check("a future publish time waits one gap", ran.sleeps[0] <= 120_000, String(ran.sleeps[0]));
 check("a future publish time still publishes", ran.client.publishes.length === 1, String(ran.client.publishes.length));
 check("a future publish time is saved as now", corrected === start, String(corrected));
 console.log("fee-clock checks", passed);

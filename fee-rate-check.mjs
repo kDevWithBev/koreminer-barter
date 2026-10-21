@@ -64,8 +64,9 @@ try {
   const inHour = client.publishes.filter((row) => row.at < start + hour);
   const burst = later.filter((row) => row.at < last + gap);
   check("a restart does not publish inside the interval", later.length > 0 && burst.length === 0, JSON.stringify({ last, gap, first: later[0]?.at, burst: burst.length, total: client.publishes.length }));
-  check("an hour holds at most 60 publishes", inHour.length <= 60, String(inHour.length));
-  check("the limit still publishes through the hour", inHour.length === 60, String(inHour.length));
+  // fix/rate-hold: 60 ledger blocks an hour at 2 blocks a publish is 30 publishes.
+  check("an hour holds at most 30 publishes (60 ledger blocks)", inHour.length <= 30, String(inHour.length));
+  check("the limit still publishes through the hour", inHour.length === 30, String(inHour.length));
 } finally {
   console.log = say;
   console.error = yell;

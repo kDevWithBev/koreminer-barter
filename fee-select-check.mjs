@@ -3,9 +3,9 @@ import { makeBooks, makeClient, readState, runCase } from "./fee-harness.mjs";
 
 const start = Date.parse("2026-10-18T15:00:00.000Z");
 const LINE = "Picks off. Payouts only.";
-const FEE6 = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Backing off.";
-const QUOTE_OVER = "ALERT Fee 0.06000 KTA is over the 0.05000 KTA cap. Backing off.";
-const NON_KTA = "ALERT Non-KTA fee selected. Backing off.";
+const FEE6 = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
+const QUOTE_OVER = "ALERT Fee 0.06000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
+const NON_KTA = "ALERT Non-KTA fee selected. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
 let passed = 0;
 
 function check(name, ok, extra = "") {

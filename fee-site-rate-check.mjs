@@ -150,13 +150,15 @@ async function payouts(limit, wallets) {
   return published.filter((row) => row.kind === "payout");
 }
 
+// fix/rate-hold: the cap is 60 LEDGER blocks a rolling hour and each publish is 2 blocks (work + fee),
+// so a full hour is 30 publishes. 120 in the env is clamped to the hard 60.
 const pick60 = await picks(60);
-check("60 an hour caps picks at 60", pick60.length <= 60 && pick60.length >= 60, String(pick60.length));
+check("60 ledger blocks an hour caps picks at 30 publishes", pick60.length === 30, String(pick60.length));
 const pick120 = await picks(120);
-check("120 an hour caps picks at 120", pick120.length <= 120 && pick120.length > 60, String(pick120.length));
+check("120 in the env is clamped: still 30 pick publishes", pick120.length === 30, String(pick120.length));
 const pay60 = await payouts(60, 70);
-check("60 an hour caps payouts at 60", pay60.length <= 60 && pay60.length >= 60, String(pay60.length));
+check("60 ledger blocks an hour caps payouts at 30 publishes", pay60.length === 30, String(pay60.length));
 const pay120 = await payouts(120, 130);
-check("120 an hour caps payouts at 120", pay120.length <= 120 && pay120.length > 60, String(pay120.length));
+check("120 in the env is clamped: still 30 payout publishes", pay120.length === 30, String(pay120.length));
 delete process.env.MAX_BLOCKS_PER_HOUR;
 console.log("fee-site-rate checks", passed);

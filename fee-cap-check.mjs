@@ -1,7 +1,10 @@
 import { FEE_PER_TX, fromKta } from "./pace.mjs";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { aliceDue, makeBooks, makeClient, readState, runCase } from "./fee-harness.mjs";
 
-const ALERT = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Backing off.";
+// fix/rate-hold: a pick over the cap writes FEEHOLD and stays paused (was: back off and retry).
+const ALERT = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
 let passed = 0;
 
 function check(name, ok, extra = "") {
@@ -35,7 +38,7 @@ check("a 6 KTA vote fee publishes nothing", voteTime.client.publishes.length ===
 check("a 6 KTA vote fee never builds the fee block", voteTime.client.feeBlockBuilds === 0);
 check("a 6 KTA vote fee alerts once", alerts(voteTime.errors).join("\n") === ALERT, voteTime.errors.join("\n"));
 check("over-cap does not use the 10s retry", voteTime.errors.every((line) => !line.startsWith("Retry.")));
-check("backoff starts at 30s then doubles", JSON.stringify(voteTime.sleeps) === JSON.stringify([30000, 60000, 120000, 240000]), JSON.stringify(voteTime.sleeps));
+check("an over-cap vote fee writes FEEHOLD and does not back off and retry", existsSync(join(voteTime.dir, "FEEHOLD")) && voteTime.sleeps.every((ms) => ms === 30000), JSON.stringify(voteTime.sleeps));
 
 const resumedBooks = makeBooks(false);
 const resumedClient = makeClient(resumedBooks, { voteFee: fromKta("6"), pickQuote: fromKta("0.006") });
@@ -43,11 +46,15 @@ const resumed = await runCase({
   books: resumedBooks,
   client: resumedClient,
   steps: 4,
-  onSleep({ sleeps, client }) {
-    if (sleeps.filter((ms) => ms >= 30000).length >= 2) client.voteFee = null;
+  onSleep({ sleeps, client, dir }) {
+    if (sleeps.filter((ms) => ms >= 30000).length === 1) client.voteFee = null;
+    if (sleeps.filter((ms) => ms >= 30000).length === 2) {
+      check("the fee drop alone does not resume picks", client.publishes.length === 0, JSON.stringify(client.publishes));
+      try { unlinkSync(join(dir, "FEEHOLD")); } catch { /* none */ }
+    }
   },
 });
-check("publishing resumes after the vote fee drops", resumed.client.publishes.length === 1 && resumed.client.publishes[0].kind === "pick", JSON.stringify(resumed.client.publishes));
+check("publishing resumes only after a person removes FEEHOLD", resumed.client.publishes.length === 1 && resumed.client.publishes[0].kind === "pick", JSON.stringify(resumed.client.publishes));
 check("the resumed bundle is one fee block", resumed.client.feeBlockBuilds === 1);
 check("the episode still alerts only once", alerts(resumed.errors).length === 1, resumed.errors.join("\n"));
 check("the remembered fee never climbs", readState(resumed.dir).feePerTx === FEE_PER_TX.toString(), readState(resumed.dir).feePerTx);

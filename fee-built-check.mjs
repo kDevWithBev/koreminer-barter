@@ -4,10 +4,10 @@ import { FEE_PER_TX, fromKta } from "./pace.mjs";
 import { ALICE, makeBooks, makeClient, readState, runCase } from "./fee-harness.mjs";
 
 const start = Date.parse("2026-10-18T15:00:00.000Z");
-const FEE6 = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Backing off.";
-const FEE15 = "ALERT Fee 1.50000 KTA is over the 0.05000 KTA cap. Backing off.";
-const FEE007 = "ALERT Fee 0.00700 KTA is over the 0.05000 KTA cap. Backing off.";
-const NON_KTA = "ALERT Non-KTA fee selected. Backing off.";
+const FEE6 = "ALERT Fee 6.00000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
+const FEE15 = "ALERT Fee 1.50000 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
+const FEE007 = "ALERT Fee 0.00700 KTA is over the 0.05000 KTA cap. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
+const NON_KTA = "ALERT Non-KTA fee selected. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.";
 const EMPTY_OPTIONS = "Refused fee options: none, none, none";
 const MIXED_OPTIONS = "Refused fee options: 1.50000, none, none; 0.00100, other, none";
 const FOREIGN_OPTIONS = "Refused fee options: 0.00100, usdc, keeta_payee";

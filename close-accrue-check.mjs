@@ -108,8 +108,16 @@ function creditLines(logs) {
   return logs.filter((line) => line.startsWith("Close credit to "));
 }
 
+// fix/rate-hold: the config line gained the hard-limit and last-hour sentences; compare without them.
+// fix/rate-hold: state.json gained the rolling-hour list "recent"; compare without it.
+function noRecent(st) {
+  const copy = { ...st };
+  delete copy.recent;
+  return copy;
+}
+
 function keptLogs(logs) {
-  return logs.filter((line) => !SKIP_LOG.has(line));
+  return logs.filter((line) => !SKIP_LOG.has(line)).map((line) => line.replace(/ Hard limits .*? KTA a day\.( Last hour \d+ ledger blocks\.)?/, ""));
 }
 
 function loadBooks(dir) {
@@ -497,7 +505,17 @@ try {
     check(`flag ${label} books match cbc28de`, ran.ticks.at(-1).booksText === baseline.ticks.at(-1).booksText);
     check(`flag ${label} payouts match cbc28de`, show(ran.ticks.map((tick) => tick.pubs)) === show(baseline.ticks.map((tick) => tick.pubs)), show(ran.ticks.map((tick) => tick.pubs)));
     check(`flag ${label} logs match cbc28de except the off line`, JSON.stringify(ran.ticks.map((tick) => keptLogs(tick.logs))) === JSON.stringify(baseline.ticks.map((tick) => keptLogs(tick.logs))));
-    check(`flag ${label} sleeps and state match cbc28de`, JSON.stringify(ran.ticks.map((tick) => tick.sleeps)) === JSON.stringify(baseline.ticks.map((tick) => tick.sleeps)) && JSON.stringify(ran.ticks.at(-1).state) === JSON.stringify(baseline.ticks.at(-1).state));
+    // fix/rate-hold: the publish gap is 120 s (was 60 s), so a tick may hold extra rate waits of at most 60 s each.
+    const extraOk = ran.ticks.every((tick, i) => {
+      const left = [...tick.sleeps];
+      for (const ms of baseline.ticks[i].sleeps) {
+        const at = left.indexOf(ms);
+        if (at < 0) return false;
+        left.splice(at, 1);
+      }
+      return left.every((ms) => ms > 0 && ms <= 60_000);
+    });
+    check(`flag ${label} sleeps match cbc28de except the 120 s gap, and state matches`, extraOk && JSON.stringify(noRecent(ran.ticks.at(-1).state)) === JSON.stringify(baseline.ticks.at(-1).state), JSON.stringify(ran.ticks.map((tick) => tick.sleeps)));
     check(`flag ${label} prints close accrue off and does not credit`, ran.ticks.every((tick) => tick.logs.includes("Close accrue off") && creditLines(tick.logs).length === 0));
   }
   check("cbc28de copy has no close-accrue startup line", baseline.ticks.every((tick) => !tick.logs.some((line) => line.startsWith("Close accrue"))));

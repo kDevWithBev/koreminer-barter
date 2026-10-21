@@ -40,10 +40,19 @@ export function choosePack({ spendable, feePerTx = FEE_PER_TX, maxPack = BLOCK_T
   return Number(affordable);
 }
 
+// Hard ceilings. The env can lower these, never raise them.
+export const HARD_FEE_CAP = fromKta("0.05"); // KTA a block (one publish, quote total)
+export const HARD_BLOCKS_PER_HOUR = 60; // ledger blocks in any rolling hour
+export const HARD_PAYOUT_FEE_CAP = fromKta("0.05");
+export const HARD_PAYOUT_FEE_BUDGET = fromKta("0.5");
+// Each publish is a staple of the work block plus its fee block.
+export const BLOCKS_PER_PUBLISH = 2;
+export const HOUR_MS = 3_600_000;
+
 function readCap() {
   const text = process.env.FEE_CAP_PER_BUNDLE_KTA;
-  const fallback = fromKta("0.05");
-  const limit = fromKta("0.5");
+  const fallback = HARD_FEE_CAP;
+  const limit = HARD_FEE_CAP;
   if (text === undefined || text === "") return { value: fallback, from: null };
   try {
     const cap = fromKta(text);
@@ -57,11 +66,12 @@ function readCap() {
 
 function readRate() {
   const text = process.env.MAX_BLOCKS_PER_HOUR;
-  if (text === undefined || text === "") return { value: 60, from: null };
+  const top = HARD_BLOCKS_PER_HOUR;
+  if (text === undefined || text === "") return { value: top, from: null };
   const raw = Number(text);
-  if (!Number.isFinite(raw) || raw < 1) return { value: 60, from: null };
+  if (!Number.isFinite(raw) || raw < 1) return { value: top, from: null };
   const n = Math.floor(raw);
-  if (n > 600) return { value: 600, from: n };
+  if (n > top) return { value: top, from: n };
   return { value: n, from: null };
 }
 
@@ -77,8 +87,30 @@ export function picksOff() {
   return Number.isFinite(raw) && raw === 0;
 }
 
+// Spacing keeps a steady pace under the hard count: limit ledger blocks an hour,
+// BLOCKS_PER_PUBLISH blocks each publish, so 60 gives one publish every 120 s.
 export function minPublishGapMs(limit = maxBlocksPerHour()) {
-  return Math.ceil(3_600_000 / limit);
+  return Math.ceil((HOUR_MS * BLOCKS_PER_PUBLISH) / limit);
+}
+
+// Rolling hour of ledger blocks. Entries are [timeMs, blocks].
+// An entry dated after now (the clock went back) is kept and counted until now passes it by an hour.
+export function pruneRecent(list, at) {
+  const out = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    if (!Array.isArray(item) || item.length !== 2) continue;
+    const t = Number(item[0]);
+    const n = Number(item[1]);
+    if (!Number.isFinite(t) || !Number.isInteger(n) || n < 1 || n > 100) continue;
+    if (t > at - HOUR_MS) out.push([t, n]);
+  }
+  return out.slice(-500);
+}
+
+export function blocksInHour(list, at) {
+  let sum = 0;
+  for (const [t, n] of pruneRecent(list, at)) if (t > at - HOUR_MS) sum += n;
+  return sum;
 }
 
 function readMoney(text, fallbackText, limitText) {
@@ -96,11 +128,11 @@ function readMoney(text, fallbackText, limitText) {
 }
 
 function readPayoutCap() {
-  return readMoney(process.env.PAYOUT_FEE_CAP_KTA, "0.05", "10");
+  return readMoney(process.env.PAYOUT_FEE_CAP_KTA, "0.05", "0.05");
 }
 
 function readPayoutBudget() {
-  return readMoney(process.env.PAYOUT_FEE_BUDGET_KTA_PER_DAY, "0.5", "100");
+  return readMoney(process.env.PAYOUT_FEE_BUDGET_KTA_PER_DAY, "0.5", "0.5");
 }
 
 export function payoutFeeCap() {
@@ -115,7 +147,7 @@ export function bundleCap() {
   return readCap().value;
 }
 
-export function configLine() {
+export function configLine(lastHour = null) {
   const cap = readCap();
   const rate = readRate();
   const payoutCap = readPayoutCap();
@@ -127,6 +159,8 @@ export function configLine() {
   if (payoutBudget.from !== null) bits.push(`payout budget ${kta(payoutBudget.from)} KTA`);
   let line = `Config fee cap ${kta(cap.value)} KTA. Payout fee cap ${kta(payoutCap.value)} KTA. Payout fee budget ${kta(payoutBudget.value)} KTA a day. Max ${rate.value} blocks an hour.`;
   if (bits.length) line += ` (clamped from ${bits.join(", ")})`;
+  line += ` Hard limits ${kta(HARD_FEE_CAP)} KTA a block, ${HARD_BLOCKS_PER_HOUR} ledger blocks an hour, payout ${kta(HARD_PAYOUT_FEE_CAP)} KTA a block and ${kta(HARD_PAYOUT_FEE_BUDGET)} KTA a day.`;
+  if (lastHour !== null) line += ` Last hour ${lastHour} ledger blocks.`;
   line += picksOff() ? " Picks off." : " Picks on.";
   return line;
 }

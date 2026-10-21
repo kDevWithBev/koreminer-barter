@@ -9,7 +9,8 @@ function check(name, ok, extra = "") {
 }
 
 const start = Date.parse("2026-10-18T15:00:00.000Z");
-const gap = 60_000;
+// fix/rate-hold: 120 s, since each publish is 2 ledger blocks under the 60 an hour cap.
+const gap = 120_000;
 
 function watchQuotes(client, time, marks) {
   const orig = client.getQuotes.bind(client);

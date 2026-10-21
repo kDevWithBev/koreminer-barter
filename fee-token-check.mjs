@@ -24,7 +24,7 @@ const foreign = await runCase({
 const seen = alerts(foreign.errors);
 check("a non-KTA fee publishes nothing", foreign.client.publishes.length === 0, String(foreign.client.publishes.length));
 check("a non-KTA fee builds no fee block", foreign.client.feeBlockBuilds === 0, String(foreign.client.feeBlockBuilds));
-check("a non-KTA fee alerts once", seen.length === 1 && seen[0] === "ALERT Non-KTA fee selected. Backing off.", seen.join("\n"));
+check("a non-KTA fee alerts once", seen.length === 1 && seen[0] === "ALERT Non-KTA fee selected. Picks paused (FEEHOLD). Ask Keeta before removing FEEHOLD.", seen.join("\n"));
 
 const mixedBooks = makeBooks(false);
 const mixed = await runCase({
