@@ -34,7 +34,7 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { accounted, booksFromJson, booksToJson } from "./books.mjs";
-import { RESERVE } from "./share.mjs";
+import { RESERVE, accrue } from "./share.mjs";
 import { selectFee } from "./run.mjs";
 
 const INTAKE = "keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa";
@@ -441,7 +441,7 @@ async function readHistory(client) {
         break;
       }
       const blocks = Array.isArray(staple?.blocks) ? staple.blocks : [];
-      staples.push({ stapleHash: hashText(staple?.blocksHash), blocks });
+      staples.push({ stapleHash: hashText(staple?.blocksHash), blocks, timeMs: when });
       for (const block of blocks) {
         if (accountKey(block?.account) !== INTAKE) continue;
         const hash = hashText(block?.hash);
@@ -479,7 +479,7 @@ function findHash(hist, hash, base, baseText) {
       if (accountKey(block?.account) !== INTAKE) continue;
       if (hashText(block?.hash) !== hash) continue;
       const fee = feeFor(staple, hash, base, baseText);
-      return { found: true, fee: fee.fee, foreign: fee.foreign, stapleHash: staple.stapleHash };
+      return { found: true, fee: fee.fee, foreign: fee.foreign, stapleHash: staple.stapleHash, timeMs: staple.timeMs };
     }
   }
   return { found: false, fee: 0n, foreign: false, stapleHash: "" };
@@ -817,6 +817,11 @@ function finishBooks(ctx, verdict) {
   const booksPath = `${ctx.dir}/books.json`;
   const books = loadBooks(ctx.io, ctx.dir);
   const reserveBefore = Object.prototype.hasOwnProperty.call(ctx, "reserveBefore") ? ctx.reserveBefore : books.share.reserve;
+  // KeeLend Ops fix (i): credit the KORE earned since the books' last chain block up to this refund block,
+  // with the stakes as they were before the refund, then take the refunded KTA out. Never moves time back,
+  // so a block at or before lastMs credits nothing (no double credit after the runner already booked past it).
+  const blockMs = Number.isFinite(verdict.blockMs) ? verdict.blockMs : books.share.lastMs;
+  accrue(books.share, Math.max(books.share.lastMs, blockMs)); // GUARD:K1-accrue
   applyBooks(books, ctx.intent.recipients, BigInt(ctx.intent.addbacks), verdict.fee); // GUARD:books-adjust
   const problem = booksAssertions(books, verdict.balance, ctx.intent.recipients, reserveBefore); // GUARD:R5
   const receipt = {
@@ -1173,7 +1178,7 @@ async function main(deps = {}) {
         say("Stop. Do not adjust books. Send this output to Forge and KeeLend Ops.");
         return 4;
       }
-      const code = finishBooks({ dir, now, say, intent, io, batch }, { fee: hit.fee, balance, stapleHash: hit.stapleHash });
+      const code = finishBooks({ dir, now, say, intent, io, batch }, { fee: hit.fee, balance, stapleHash: hit.stapleHash, blockMs: hit.timeMs });
       if (code !== 0) return code;
       say("REFUND_VERIFY: LANDED (finished now)");
       return 0;
@@ -1529,7 +1534,7 @@ async function main(deps = {}) {
   const expected = chainAgain - planned.total - fee;
   const landed = hit.found && feeOk && !pendingLand && balanceLand === expected; // GUARD:R1-landed
   if (landed) {
-    const code = finishBooks({ dir, now, say, intent, io, batch, reserveBefore: reserveAtCheck }, { fee, balance: balanceLand, stapleHash: hit.stapleHash });
+    const code = finishBooks({ dir, now, say, intent, io, batch, reserveBefore: reserveAtCheck }, { fee, balance: balanceLand, stapleHash: hit.stapleHash, blockMs: hit.timeMs });
     if (code !== 0) return code;
     say("REFUND_SENT_OK");
     return 0;

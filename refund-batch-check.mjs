@@ -5,6 +5,8 @@ import { existsSync, mkdtempSync, openSync as fsOpen, readdirSync, readFileSync,
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { accounted, booksFromJson } from "./books.mjs";
+import { accrue } from "./share.mjs";
+import { DAY_MS, dayBudget } from "./ledger.mjs";
 import { main, MEMO, INTAKE, REFUND_FEE_CAP } from "./refund.mjs";
 
 const RAW = 10n ** 18n;
@@ -100,9 +102,10 @@ function world(opts = {}) {
       if (w.landing === "land") {
         let total = 0n;
         for (const op of block.operations) total += op.amount;
+        const at = new Date(opts.landAt?.[w.published.length - 1] ?? "2026-10-25T14:00:00.000Z");
         w.history = [{
           voteStaple: {
-            timestamp: () => new Date("2026-10-25T14:00:00.000Z"),
+            timestamp: () => at,
             blocksHash: hashOf(`STAPLE-${hash.slice(0, 8)}`),
             blocks: [block, { account: INTAKE, hash: hashOf(`FEE-${hash.slice(0, 8)}`), operations: [{ type: 0, amount: FEE, token: BASE, to: "fee" }] }],
           },
@@ -490,6 +493,80 @@ const notVerified = (res, text) => res.code === 3 && res.lines.some((line) => li
   const seed = w.counts.seed;
   const c = await w.go(["--check", "--batch", "2"]);
   check("C-readonly check writes only the marker", c.code === 0 && snapshot(w.dir, (p) => p.endsWith("/b2/verified.json")) === shot && readFileSync(w.path("books.json")).equals(books) && w.counts.seed === seed && (statSync(w.path("refund", "b2", "verified.json")).mode & 0o777) === 0o600);
+}
+
+// ---- K1 (KeeLend Ops fix i): KORE earned since the books' last chain block is credited up to each refund block,
+// with the stakes as they were before that batch, exactly once; a block at or before lastMs credits nothing.
+const sumMap = (m) => [...m.values()].reduce((a, b) => a + b, 0n);
+const delta = (after, before) => { const out = new Map(); for (const [k, v] of after) { const d = v - (before.get(k) ?? 0n); if (d !== 0n) out.set(k, d); } for (const k of before.keys()) if (!after.has(k)) out.set(k, -before.get(k)); return out; };
+const sameMap = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+const potOf = (fromMs, toMs) => (dayBudget(fromMs) * 1_000_000_000_000n * BigInt(toMs - fromMs)) / BigInt(DAY_MS);
+function withLast(ms) { const raw = JSON.parse(readFileSync(FIXTURE, "utf8")); raw.lastMs = ms; return `${JSON.stringify(raw)}\n`; }
+const T0 = Date.parse("2026-10-25T00:10:00.000Z"); // Sat 8:10 PM ET, the last chain block before the pause
+const T1 = Date.parse("2026-10-25T13:30:00.000Z"); // batch 1 lands
+const T2 = Date.parse("2026-10-25T14:30:00.000Z"); // batch 2 lands
+{
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString(), new Date(T2).toISOString()] });
+  const b0 = w.books();
+  const r1 = await throughB1(w);
+  const b1 = w.books();
+  const b1Text = readFileSync(w.path("books.json"), "utf8");
+  // oracle: the same accrual on the pre-refund books, done here, not by refund.mjs
+  const o1 = booksFromJson(JSON.parse(withLast(T0))); accrue(o1.share, T1);
+  const d1 = delta(b1.share.pending, b0.share.pending);
+  check("K1 batch 1 credits the accrual since lastMs once, with the pre-refund stakes", r1.s1.code === 0 && has(r1.s1.lines, "BOOKS_OK") && b1.share.lastMs === T1 && sameMap(b1.share.pending, o1.share.pending) && sumMap(d1) === potOf(T0, T1) && (d1.get(BIG) ?? 0n) > 0n && (d1.get(TREY_A) ?? 0n) > 0n);
+  check("K1 batch 1 accrual keeps the KTA books and their checks as before", accounted(b1) === w.balance && r1.c1.code === 0 && b1.share.stake.get(TREY_A) === undefined);
+  const again = await w.go(["--verify", "--batch", "1"]);
+  check("K1 verify after batch 1 adds nothing (exactly once)", again.code === 0 && has(again.lines, "REFUND_VERIFY: LANDED (already finished)") && sameMap(w.books().share.pending, b1.share.pending) && w.books().share.lastMs === T1);
+  const d2r = await w.go(["--no-quote", "--batch", "2"]);
+  const s2 = await w.go(sendArgv("2", info(d2r.lines)));
+  const c2 = await w.go(["--check", "--batch", "2"]);
+  const b2 = w.books();
+  const d2 = delta(b2.share.pending, b1.share.pending);
+  // oracle for batch 2: the books as batch 1 left them (Trey keys and bridge gone) accrued T1 -> T2, done here
+  const o2 = booksFromJson(JSON.parse(b1Text)); accrue(o2.share, T2);
+  const p1 = b1.share;
+  check("K1 batch 2 credits T1 to T2 once, only to the stakes left after batch 1", s2.code === 0 && c2.code === 0 && b2.share.lastMs === T2 && sumMap(d2) === potOf(T1, T2) && (d2.get(TREY_A) ?? 0n) === 0n && (d2.get(BRIDGE) ?? 0n) === 0n && (d2.get(BIG) ?? 0n) > 0n && sameMap(b2.share.pending, o2.share.pending) && [...d2.keys()].every((k) => (p1.stake.get(k) ?? 0n) > 0n));
+  check("K1 totals conserved: batches 1 and 2 credit exactly the KORE of T0 to T2, KTA books still match the chain", sumMap(delta(b2.share.pending, b0.share.pending)) === potOf(T0, T1) + potOf(T1, T2) && accounted(b2) === w.balance && b2.share.stake.size === 0);
+  const v2 = await w.go(["--verify", "--batch", "2"]);
+  check("K1 verify after batch 2 adds nothing (exactly once)", v2.code === 0 && sameMap(w.books().share.pending, b2.share.pending) && w.books().share.lastMs === T2);
+}
+{
+  // the runner already booked past both blocks: lastMs after the block time credits nothing and does not throw
+  const late = Date.parse("2026-10-25T15:00:00.000Z");
+  const w = world({ booksText: withLast(late) });
+  const b0 = w.books();
+  const r = await throughB2(w);
+  const b2 = w.books();
+  check("K1 no double credit when the block time is before lastMs", r.s1.code === 0 && r.s2.code === 0 && r.c2.code === 0 && sameMap(b2.share.pending, b0.share.pending) && b2.share.lastMs === late);
+}
+{
+  // block time equal to lastMs credits nothing
+  const at = Date.parse("2026-10-25T14:00:00.000Z");
+  const w = world({ booksText: withLast(at) });
+  const b0 = w.books();
+  const r = await throughB1(w);
+  check("K1 no credit when the block time equals lastMs", r.s1.code === 0 && sameMap(w.books().share.pending, b0.share.pending) && w.books().share.lastMs === at);
+}
+{
+  // batch 1 landed but the process died before FINISH: verify finishes it and credits the accrual once
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString()] });
+  const b0 = w.books();
+  const d1 = await w.go(["--no-quote", "--batch", "1"]);
+  const s1 = await w.go(sendArgv("1", info(d1.lines)), { fs: { openSync: (path, flags, mode) => { if (String(path).includes("/b1/receipt-")) throw Object.assign(new Error("died"), { code: "EIO" }); return fsOpen(path, flags, mode); } } });
+  const mid = w.books();
+  const v = await w.go(["--verify", "--batch", "1"]);
+  const o1 = booksFromJson(JSON.parse(withLast(T0))); accrue(o1.share, T1);
+  check("K1 verify-finish credits the batch 1 accrual once, to the block time", s1.code === 3 && sameMap(mid.share.pending, b0.share.pending) && v.code === 0 && sameMap(w.books().share.pending, o1.share.pending) && w.books().share.lastMs === T1 && sumMap(delta(w.books().share.pending, b0.share.pending)) === potOf(T0, T1));
+}
+{
+  // the accrual crosses 00:00 UTC (batch 1 a day later): the whole span is credited, days split as the runner does
+  const T1b = Date.parse("2026-10-26T13:30:00.000Z");
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1b).toISOString()] });
+  const b0 = w.books();
+  const r = await throughB1(w);
+  const o1 = booksFromJson(JSON.parse(withLast(T0))); accrue(o1.share, T1b);
+  check("K1 accrual across 00:00 UTC matches the runner accrue", r.s1.code === 0 && sameMap(w.books().share.pending, o1.share.pending) && w.books().share.lastMs === T1b && sumMap(delta(w.books().share.pending, b0.share.pending)) === potOf(T0, Date.parse("2026-10-26T00:00:00.000Z")) + potOf(Date.parse("2026-10-26T00:00:00.000Z"), T1b));
 }
 
 console.log(`refund batch checks ${passed}`);
