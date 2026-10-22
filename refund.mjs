@@ -406,7 +406,7 @@ function feeReason(err) {
 function stapleTime(staple) {
   try {
     const value = typeof staple?.timestamp === "function" ? staple.timestamp() : staple?.timestamp;
-    if (value instanceof Date) return value.getTime();
+    if (value instanceof Date) { const ms = value.getTime(); return Number.isFinite(ms) ? ms : null; }
     if (typeof value === "number" && Number.isFinite(value)) return value;
     const ms = Date.parse(String(value));
     return Number.isFinite(ms) ? ms : null;
@@ -820,10 +820,13 @@ function finishBooks(ctx, verdict) {
   // KeeLend Ops fix (i): credit the KORE earned since the books' last chain block up to this refund block,
   // with the stakes as they were before the refund, then take the refunded KTA out. Never moves time back,
   // so a block at or before lastMs credits nothing (no double credit after the runner already booked past it).
-  const blockMs = Number.isFinite(verdict.blockMs) ? verdict.blockMs : books.share.lastMs;
-  accrue(books.share, Math.max(books.share.lastMs, blockMs)); // GUARD:K1-accrue
+  const blockMs = verdict.blockMs;
+  const timeBad = !Number.isFinite(blockMs) || blockMs <= 0; // GUARD:K1-time
+  // r5 (Ops N1): a block time more than 10 minutes after now is not trusted; the books are not adjusted.
+  const timeFuture = !timeBad && blockMs > ctx.now() + 600000; // GUARD:K1-future
+  if (!timeBad && !timeFuture) accrue(books.share, Math.max(books.share.lastMs, blockMs)); // GUARD:K1-accrue
   applyBooks(books, ctx.intent.recipients, BigInt(ctx.intent.addbacks), verdict.fee); // GUARD:books-adjust
-  const problem = booksAssertions(books, verdict.balance, ctx.intent.recipients, reserveBefore); // GUARD:R5
+  const problem = timeBad ? "blocktime" : timeFuture ? "blocktime-future" : booksAssertions(books, verdict.balance, ctx.intent.recipients, reserveBefore); // GUARD:R5
   const receipt = {
     block: ctx.intent.block,
     staple: verdict.stapleHash ?? "",

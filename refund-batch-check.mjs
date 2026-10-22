@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, openSync as fsOpen, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { accounted, booksFromJson } from "./books.mjs";
+import { accounted, booksFromJson, ingest, reconcile } from "./books.mjs";
 import { accrue } from "./share.mjs";
 import { DAY_MS, dayBudget } from "./ledger.mjs";
 import { main, MEMO, INTAKE, REFUND_FEE_CAP } from "./refund.mjs";
@@ -102,10 +102,11 @@ function world(opts = {}) {
       if (w.landing === "land") {
         let total = 0n;
         for (const op of block.operations) total += op.amount;
-        const at = new Date(opts.landAt?.[w.published.length - 1] ?? "2026-10-25T14:00:00.000Z");
+        const land = opts.landAt?.[w.published.length - 1];
+        const at = land === "invalid" ? new Date(Number.NaN) : new Date(land ?? "2026-10-25T14:00:00.000Z");
         w.history = [{
           voteStaple: {
-            timestamp: () => at,
+            ...(land === "missing" ? {} : { timestamp: () => at }),
             blocksHash: hashOf(`STAPLE-${hash.slice(0, 8)}`),
             blocks: [block, { account: INTAKE, hash: hashOf(`FEE-${hash.slice(0, 8)}`), operations: [{ type: 0, amount: FEE, token: BASE, to: "fee" }] }],
           },
@@ -121,7 +122,7 @@ function world(opts = {}) {
     const lines = [];
     const code = await main({
       dir,
-      now: () => Date.parse("2026-10-25T14:00:00.000Z"),
+      now: () => opts.nowMs ?? Date.parse("2026-10-25T14:00:00.000Z"),
       systemctl: () => "inactive",
       processes: () => [],
       loadWallet: () => { w.counts.seed += 1; return { publicKeyString: INTAKE }; },
@@ -505,8 +506,9 @@ function withLast(ms) { const raw = JSON.parse(readFileSync(FIXTURE, "utf8")); r
 const T0 = Date.parse("2026-10-25T00:10:00.000Z"); // Sat 8:10 PM ET, the last chain block before the pause
 const T1 = Date.parse("2026-10-25T13:30:00.000Z"); // batch 1 lands
 const T2 = Date.parse("2026-10-25T14:30:00.000Z"); // batch 2 lands
+const NOW = Date.parse("2026-10-27T12:00:00.000Z"); // r5 (Ops N1): the harness clock is after every K1 landing time
 {
-  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString(), new Date(T2).toISOString()] });
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString(), new Date(T2).toISOString()], nowMs: NOW });
   const b0 = w.books();
   const r1 = await throughB1(w);
   const b1 = w.books();
@@ -534,7 +536,7 @@ const T2 = Date.parse("2026-10-25T14:30:00.000Z"); // batch 2 lands
 {
   // the runner already booked past both blocks: lastMs after the block time credits nothing and does not throw
   const late = Date.parse("2026-10-25T15:00:00.000Z");
-  const w = world({ booksText: withLast(late) });
+  const w = world({ booksText: withLast(late), nowMs: NOW });
   const b0 = w.books();
   const r = await throughB2(w);
   const b2 = w.books();
@@ -543,14 +545,14 @@ const T2 = Date.parse("2026-10-25T14:30:00.000Z"); // batch 2 lands
 {
   // block time equal to lastMs credits nothing
   const at = Date.parse("2026-10-25T14:00:00.000Z");
-  const w = world({ booksText: withLast(at) });
+  const w = world({ booksText: withLast(at), nowMs: NOW });
   const b0 = w.books();
   const r = await throughB1(w);
   check("K1 no credit when the block time equals lastMs", r.s1.code === 0 && sameMap(w.books().share.pending, b0.share.pending) && w.books().share.lastMs === at);
 }
 {
   // batch 1 landed but the process died before FINISH: verify finishes it and credits the accrual once
-  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString()] });
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString()], nowMs: NOW });
   const b0 = w.books();
   const d1 = await w.go(["--no-quote", "--batch", "1"]);
   const s1 = await w.go(sendArgv("1", info(d1.lines)), { fs: { openSync: (path, flags, mode) => { if (String(path).includes("/b1/receipt-")) throw Object.assign(new Error("died"), { code: "EIO" }); return fsOpen(path, flags, mode); } } });
@@ -562,11 +564,79 @@ const T2 = Date.parse("2026-10-25T14:30:00.000Z"); // batch 2 lands
 {
   // the accrual crosses 00:00 UTC (batch 1 a day later): the whole span is credited, days split as the runner does
   const T1b = Date.parse("2026-10-26T13:30:00.000Z");
-  const w = world({ booksText: withLast(T0), landAt: [new Date(T1b).toISOString()] });
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1b).toISOString()], nowMs: NOW });
   const b0 = w.books();
   const r = await throughB1(w);
   const o1 = booksFromJson(JSON.parse(withLast(T0))); accrue(o1.share, T1b);
   check("K1 accrual across 00:00 UTC matches the runner accrue", r.s1.code === 0 && sameMap(w.books().share.pending, o1.share.pending) && w.books().share.lastMs === T1b && sumMap(delta(w.books().share.pending, b0.share.pending)) === potOf(T0, Date.parse("2026-10-26T00:00:00.000Z")) + potOf(Date.parse("2026-10-26T00:00:00.000Z"), T1b));
+}
+
+// ---- r5 (Ops SF1, N1, N4): a bad or future block time never ends BOOKS_OK with the accrual skipped.
+const booksText = (w) => readFileSync(w.path("books.json"), "utf8");
+for (const kind of ["invalid", "missing"]) {
+  // SF1: an Invalid Date or a missing staple time is a history read failure: HOLD, books untouched, no done.json; R1 finishes later
+  const w = world({ booksText: withLast(T0), landAt: [kind], nowMs: NOW });
+  const before = booksText(w);
+  const d1 = await w.go(["--no-quote", "--batch", "1"]);
+  const s1 = await w.go(sendArgv("1", info(d1.lines)));
+  const held = s1.code === 3 && has(s1.lines, "REFUND_HOLD: history read failed") && !has(s1.lines, "BOOKS_OK") && booksText(w) === before && !existsSync(w.path("refund", "b1", "done.json")) && w.published.length === 1;
+  const v0 = await w.go(["--verify", "--batch", "1"]);
+  check(`K1 ${kind} staple time: send ends REFUND_HOLD and verify REFUND_VERIFY: UNKNOWN (exit 3), books unchanged, no done.json`, held && v0.code === 3 && has(v0.lines, "REFUND_VERIFY: UNKNOWN history read failed") && booksText(w) === before && !existsSync(w.path("refund", "b1", "done.json")));
+  w.history[0].voteStaple.timestamp = () => new Date(T1);
+  const v1 = await w.go(["--verify", "--batch", "1"]);
+  const o1 = booksFromJson(JSON.parse(withLast(T0))); accrue(o1.share, T1);
+  check(`K1 ${kind} staple time: once the time reads, R1 verify finishes and credits the accrual once`, v1.code === 0 && has(v1.lines, "REFUND_VERIFY: LANDED (finished now)") && sameMap(w.books().share.pending, o1.share.pending) && w.books().share.lastMs === T1 && w.json("refund", "b1", "done.json").books === "adjusted");
+}
+{
+  // N1: a block time more than 10 minutes after now seals a mismatch: books untouched, no accrual
+  const w = world({ booksText: withLast(T0), landAt: [new Date(NOW + 3_600_000).toISOString()], nowMs: NOW });
+  const before = booksText(w);
+  const d1 = await w.go(["--no-quote", "--batch", "1"]);
+  const s1 = await w.go(sendArgv("1", info(d1.lines)));
+  check("K1 future block time (now + 1 h) seals BOOKS_MISMATCH, books unchanged", s1.code === 3 && has(s1.lines, "BOOKS_MISMATCH") && !has(s1.lines, "BOOKS_OK") && booksText(w) === before && w.json("refund", "b1", "done.json").books === "mismatch");
+}
+for (const [label, at] of [["epoch (0)", "1970-01-01T00:00:00.000Z"], ["before 1970", "1969-12-31T23:00:00.000Z"]]) {
+  // a staple dated at or before 1970 is older than the history cutoff, so it is never taken as the refund block
+  const w = world({ booksText: withLast(T0), landAt: [at], nowMs: NOW });
+  const before = booksText(w);
+  const d1 = await w.go(["--no-quote", "--batch", "1"]);
+  const s1 = await w.go(sendArgv("1", info(d1.lines)));
+  check(`K1 staple time ${label} is before the cutoff: send ends REFUND_HOLD (hash not found), books unchanged, no done.json`, s1.code === 3 && has(s1.lines, "REFUND_HOLD: hash found no") && !has(s1.lines, "BOOKS_OK") && booksText(w) === before && !existsSync(w.path("refund", "b1", "done.json")));
+}
+{
+  // N1 boundary: 9 minutes after now is still accepted and credited to the block time
+  const at = NOW + 540_000;
+  const w = world({ booksText: withLast(T0), landAt: [new Date(at).toISOString()], nowMs: NOW });
+  const r = await throughB1(w);
+  const o1 = booksFromJson(JSON.parse(withLast(T0))); accrue(o1.share, at);
+  check("K1 block time 9 minutes after now is accepted and credited once", r.s1.code === 0 && has(r.s1.lines, "BOOKS_OK") && sameMap(w.books().share.pending, o1.share.pending) && w.books().share.lastMs === at);
+}
+{
+  // N4: the runner replays the refund staple after a restart following batch 1: nothing is credited twice,
+  // and later time is credited once from the block on (the 13 stakes left still earn)
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString()], nowMs: NOW });
+  const b0 = w.books();
+  await throughB1(w);
+  const b1 = w.books();
+  const replay = w.books();
+  const r1 = ingest(replay, { blocksHash: "REPLAY-1", timeMs: T1, deposits: [], ownPicks: 0 });
+  const rc1 = reconcile(replay, w.balance, T1, NOW);
+  const same = sameMap(replay.share.pending, b1.share.pending) && replay.share.lastMs === T1;
+  const T3 = Date.parse("2026-10-25T20:00:00.000Z");
+  const rc3 = reconcile(replay, w.balance, T3, NOW);
+  const o3 = booksFromJson(JSON.parse(booksText(w))); accrue(o3.share, T3);
+  check("K1 runner replay after batch 1 credits nothing twice; T1 to T3 is credited once", r1 === "ok" && rc1 === "ok" && rc3 === "ok" && same && sameMap(replay.share.pending, o3.share.pending) && sumMap(delta(replay.share.pending, b0.share.pending)) === potOf(T0, T1) + potOf(T1, T3));
+}
+{
+  // N4: replay of both refund staples after batch 2: nothing is credited twice (no stake is left, so nothing more accrues)
+  const w = world({ booksText: withLast(T0), landAt: [new Date(T1).toISOString(), new Date(T2).toISOString()], nowMs: NOW });
+  const b0 = w.books();
+  await throughB2(w);
+  const b2 = w.books();
+  const replay = w.books();
+  const rs = [T1, T2].map((ms, i) => ingest(replay, { blocksHash: `REPLAY-${i}`, timeMs: ms, deposits: [], ownPicks: 0 }));
+  const rc = reconcile(replay, w.balance, T2, NOW);
+  check("K1 runner replay after batch 2 credits nothing twice; totals stay T0 to T2", rs.every((x) => x === "ok") && rc === "ok" && sameMap(replay.share.pending, b2.share.pending) && replay.share.lastMs === T2 && sumMap(delta(replay.share.pending, b0.share.pending)) === potOf(T0, T1) + potOf(T1, T2));
 }
 
 console.log(`refund batch checks ${passed}`);

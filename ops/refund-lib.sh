@@ -9,7 +9,7 @@ D=/opt/koreminer; DI=/etc/systemd/system/koreminer.service.d; FC=$DI/fee.conf; C
 S=/root/koreminer-refund-stage; BP=/root/koreminer-refund-backup; ST=/root/koreminer-refund-stoptime
 NF=/root/koreminer-refund-runner-node; PV=/root/koreminer-refund-b2-preview
 RUNTIME="run.mjs:7cb0524bf2bdb5503600850648f0313b pace.mjs:ab212d0b52a6e1df530b4e3caae118b5 pay.mjs:e9ed5a9eee093066cbfaa7e2e82f5ada share.mjs:4702e6f3a327abfea599c583a1bf0029 books.mjs:3180fa4fcc7729e86bb918014d7d09c5 chain.mjs:6213a1c079bccaa6e962b8a6fc269212 ledger.mjs:3cc178153ac5f8ddebd2ed28a5c039c5 base-credit.mjs:0a40a84cecf3ad5fe5572df7491b098e claim.mjs:d3b431001698bc0c8a9d091844d92002 links.mjs:8a01878324b4c29816e6d96578c23696"
-NEW="refund.mjs:dc0c7f3b81c1cd6d57596ec9805b2b98 refund-drain.json:8b4b5de53e7ec13081a4f04da7b4f997"
+NEW="refund.mjs:24a9531f541ec91d550548b95e0921e9 refund-drain.json:8b4b5de53e7ec13081a4f04da7b4f997"
 KJ=$D/node_modules/@keetanetwork/keetanet-client; KFP=4ccd1d4637c00aec945a499492ed4fee
 LEFT=""
 fail0() { echo "$1"; echo "${X}_FAIL"; exit 1; }
@@ -54,6 +54,8 @@ orderok() { local n e
   [ "${n:-0}" -ge 1 ] || { LEFT="no 'Close paid.' line since 00:00 UTC today"; return 1; }
   [ -e $CA ] && { LEFT="close-accrue.conf is still there (run the CLOSE_ACCRUE flag-off box first)"; return 1; }
   e=$(envlist | grep -c '^CLOSE_ACCRUE=' || true); [ "${e:-0}" = 0 ] || { LEFT="CLOSE_ACCRUE is still set on the unit"; return 1; }
+  x=$(jl "$(date -u -d "$(systemctl show -p ActiveEnterTimestamp --value koreminer)" "+%F %T")" | grep -cx 'Close accrue off' || true); [ "${x:-0}" -ge 1 ] || { LEFT="runner did not log 'Close accrue off' since start"; return 1; }
+  e=$(efcount CLOSE_ACCRUE); [ "${e:-0}" = 0 ] || { LEFT="CLOSE_ACCRUE is set in an EnvironmentFile"; return 1; }
   return 0; }
 # rstate: one word for the refund files (names and JSON fields only, never amounts of other files):
 # EMPTY, B1_VERIFIED, B2_VERIFIED, or OPEN <reason>. Then "records <n>".
