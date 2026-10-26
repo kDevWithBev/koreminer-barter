@@ -1,5 +1,5 @@
 // readFireStaple / pullSince (chain.mjs). Offline.
-import { pullSince, readFireStaple, readKeyedSends } from "./chain.mjs";
+import { findKeyedSends, headAgreed, pullSince, readFireStaple, readKeyedSends } from "./chain.mjs";
 
 const FIRE = "keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq";
 const INTAKE = "keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa";
@@ -60,4 +60,48 @@ const kr = row("K1", "2026-11-02T01:00:00.000Z", [
 ]);
 const ks = readKeyedSends(kr, { from: SH, koreText: KORE });
 check("O14 a keyed KORE send from another account, or a non-KORE op from the shaft, is not a shaft payout", ks.length === 1 && ks[0].block === "KB1" && ks[0].op === 0 && ks[0].externals[0] === "kore-keeta_w1-5");
+// Ops R-1: the shaft's hash chain. Real mainnet shape (Oct 26): each payout staple holds a fee block then the payout
+// block, both by the shaft; block 1's previous is block 0, block 0's previous is block 1 of the staple below.
+const hx = (h) => ({ toString: () => h });
+const pay = (n, iso, opts = {}) => row(`T${n}`, iso, [
+  { account: acct(SH), hash: hx(`F${n}`), previous: hx(`P${n - 1}`), ...(opts.opening ? { $opening: true } : {}), operations: [{ type: 0, to: acct(BASE), token: acct(BASE), amount: 1n }] },
+  { account: acct(SH), hash: hx(`P${n}`), previous: hx(`F${n}`), operations: [{ type: 0, to: acct(`keeta_w${n}`), token: acct(KORE), amount: 5n, external: `kore-keeta_w${n}-${n}` }] },
+]);
+const dep = (n, iso) => row(`D${n}`, iso, [{ account: acct("keeta_depositor"), hash: hx(`DB${n}`), operations: [{ type: 0, to: acct(SH), token: acct(BASE), amount: 9n }] }]);
+const hist = [pay(6, "2026-11-03T00:20:00Z"), dep(2, "2026-11-03T00:15:00Z"), pay(5, "2026-11-03T00:12:00Z"), pay(4, "2026-11-03T00:11:00Z"), dep(1, "2026-11-02T10:00:00Z"), pay(3, "2026-11-02T00:10:00Z"), pay(2, "2026-11-02T00:09:00Z")];
+const pager = (rs, size = 100) => ({ client: { getHistory: async (a, { startBlocksHash }) => { const i = startBlocksHash ? rs.findIndex((x) => x.voteStaple.blocksHash.toString() === startBlocksHash) + 1 : 0; return rs.slice(i, i + size); } } });
+const since = Date.parse("2026-11-03T00:00:00Z");
+const fk = (rs, o = {}) => findKeyedSends(pager(rs), SH, { sinceMs: since, koreText: KORE, ...o });
+const full = await fk(hist);
+check("R-1 a whole chain (fee + payout blocks, deposits between) is complete, head is the newest shaft block", full.complete && full.head === "P6" && full.sends.map((x) => x.externals[0]).join() === "kore-keeta_w6-6,kore-keeta_w5-5,kore-keeta_w4-4");
+const gap = await fk(hist.filter((r) => r.voteStaple.blocksHash.toString() !== "T5"));
+check("R-1 a middle shaft row dropped (older rows still there): NOT complete, the gap is named", gap.complete === false && /a row is missing/.test(gap.broken));
+const gapOld = await fk(hist.filter((r) => r.voteStaple.blocksHash.toString() !== "T3"));
+check("R-1 the first row older than the start dropped: NOT complete (the old row must hold the next link)", gapOld.complete === false && /a row is missing/.test(gapOld.broken));
+const depGone = await fk(hist.filter((r) => r.voteStaple.blocksHash.toString() !== "D2"));
+check("R-1 a deposit row (not the shaft's block) dropped: the chain cannot see it, still complete (payout search is unaffected)", depGone.complete === true);
+const half = hist.map((r) => (r.voteStaple.blocksHash.toString() === "T5" ? row("T5", "2026-11-03T00:12:00Z", [r.voteStaple.blocks[1]]) : r));
+const h2 = await fk(half);
+check("R-1 a staple that comes back with one of its two shaft blocks: NOT complete", h2.complete === false);
+// A staple with a stray third shaft block (C5, not linked to the others): two newest blocks, so the staple is refused.
+const fork = hist.map((r) => (r.voteStaple.blocksHash.toString() === "T5" ? row("T5", "2026-11-03T00:12:00Z", [...r.voteStaple.blocks, { account: acct(SH), hash: hx("C5"), previous: hx("Z9"), operations: [] }]) : r));
+const fk5 = await fk(fork);
+check("R-1 a staple with a stray shaft block not on the chain (two newest blocks): NOT complete, named", fk5.complete === false && /no single newest block/.test(fk5.broken), JSON.stringify(fk5.broken));
+const long = Array.from({ length: 160 }, (_, k) => pay(200 - k, new Date(Date.parse("2026-11-03T05:00:00Z") - k * 60_000).toISOString())).concat([pay(40, "2026-11-02T00:00:00Z")]);
+// the 160 newer rows run P200 .. P41 (F41's previous is P40, in the old row)
+const paged = await fk(long);
+check("R-1 the chain holds across a page turn (100 + 61 rows)", paged.complete === true && paged.head === "P200" && paged.sends.length === 160);
+const pagedGap = await fk(long.filter((r, k) => k !== 100));
+check("R-1 a row dropped right at the page turn: NOT complete", pagedGap.complete === false);
+const opened = [pay(6, "2026-11-03T00:20:00Z"), pay(5, "2026-11-03T00:12:00Z", { opening: true })];
+const op = await fk(opened);
+check("N-4 the shaft's opening block is newer than the start: never complete (hold), the chain has nothing older", op.complete === false);
+const op2 = await fk([...opened, pay(4, "2026-11-02T00:12:00Z")]);
+check("R-1 a row below the opening block breaks the chain", op2.complete === false && /opening/.test(op2.broken));
+const headC = (heads) => ({ client: { representatives: heads.map((h, i) => ({ endpoints: { api: `r${i}` }, h })), getAccountHeadInfo: async (a, rep) => { if (rep.h === "error") throw new Error("down"); return rep.h === null ? null : { block: { hash: hx(rep.h) } }; } } });
+check("R-1 head agreed by every rep", (await headAgreed(headC(["P6", "P6", "P6"]), SH, "P6")).ok === true);
+check("R-1 one rep lags: not agreed", (await headAgreed(headC(["P6", "P5", "P6"]), SH, "P6")).ok === false);
+check("R-1 the walk's head is behind every rep: not agreed", (await headAgreed(headC(["P7", "P7"]), SH, "P6")).ok === false);
+check("R-1 a rep errors or has no head: not agreed", (await headAgreed(headC(["P6", "error"]), SH, "P6")).ok === false && (await headAgreed(headC(["P6", null]), SH, "P6")).ok === false);
+check("R-1 no reps, or no head from the walk: not agreed", (await headAgreed(headC([]), SH, "P6")).ok === false && (await headAgreed(headC(["P6"]), SH, "")).ok === false);
 console.log("chain fire ok");

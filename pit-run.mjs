@@ -24,7 +24,7 @@ import {
   payable, pitFromJson, pitToJson, queueNext, recordSend, applyPaid, recover, startQueue, wholeDue, pct,
 } from "./pit.mjs";
 import { seedLadder, rungName, RUNGS } from "./ladder.mjs";
-import { findKeyedSends, pullSince, readFireStaple } from "./chain.mjs";
+import { findKeyedSends, headAgreed, pullSince, readFireStaple } from "./chain.mjs";
 import { minPublishGapMs } from "./pace.mjs";
 import { floorAfter, judgeIntent } from "./pay.mjs";
 
@@ -249,8 +249,9 @@ export async function runPit({
       const legacyUntil = init.legacyUntil === undefined ? null : Date.parse(init.legacyUntil);
       if (init.legacyUntil !== undefined && !Number.isFinite(legacyUntil)) refuse("pit-init legacyUntil is not a time");
       // Ops N-3: pit and legacy keys share the kore-<wallet>-<n> shape. The first pit payout cannot exist before pit day 1
-      // has ended, so a legacyUntil at or after that could hide pit sends: refuse it.
-      if (legacyUntil !== null && legacyUntil >= cfg.startMs + DAY_MS) refuse(`pit-init legacyUntil ${init.legacyUntil} is not before the end of pit day 1; it could hide pit sends`);
+      // has ended, and settle looks back SETTLE_LOOKBACK_MS before a day's end (Ops N-6), so a legacyUntil at or after
+      // start + 1 day - 15 min could hide pit sends: refuse it.
+      if (legacyUntil !== null && legacyUntil >= cfg.startMs + DAY_MS - SETTLE_LOOKBACK_MS) refuse(`pit-init legacyUntil ${init.legacyUntil} is not before pit day 1 end - 15 min; it could hide pit sends`);
       const h = await findKeyedSends(client, ADDR.intake, { sinceMs: cfg.startMs, koreText });
       if (!h.complete) refuse("shaft history since pit day 1 is incomplete; refusing to seed");
       const hits = h.sends.filter((s) => s.timeMs >= cfg.startMs && !(legacyUntil !== null && s.timeMs <= legacyUntil) && s.externals.some((e) => e.startsWith("kore-")));
@@ -394,8 +395,15 @@ export async function runPit({
     if (pend === "stuck") { save(); hold("A pending block has no date and has not cleared in 30 min."); return "hold"; }
     if (pend === "live" || now() - it.at < EXPIRE_MS) return "wait";
     if (!h.complete) {
-      pit.alerts.push([it.day, "PAYOUT_WAIT_HISTORY", `${key}: shaft history incomplete; not voided`]);
+      pit.alerts.push([it.day, "PAYOUT_WAIT_HISTORY", `${key}: shaft history incomplete${h.broken ? ` (${h.broken})` : ""}; not voided`]);
       save(); hold(`Shaft history incomplete for ${key}.`); return "hold";
+    }
+    // Ops R-1 freshness gate: the walk's newest shaft block must be the head every representative reports. A rep that lags
+    // or misses the paid row disagrees with the others (or with the walk), and a void then waits as a hold.
+    const fresh = await headAgreed(client, ADDR.intake, h.head);
+    if (!fresh.ok) {
+      pit.alerts.push([it.day, "PAYOUT_WAIT_HISTORY", `${key}: shaft head not agreed (${fresh.why}); not voided`]);
+      save(); hold(`Shaft head not agreed for ${key}.`); return "hold";
     }
     // Ops B-1 (3) and N-1: a shaft send to this wallet for exactly this amount whose external is not a readable kore- key
     // (base64, hex, missing) may be this payout. Hold, never void.

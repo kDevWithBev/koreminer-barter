@@ -30,11 +30,7 @@ function mockClient({ kta = 10n * ONE_KTA, kore = 20_000_000n, fee = FEE_RAW, st
   c._history = async (account, { startBlocksHash } = {}) => {
     if (account === ADDR.intake) { // the shaft's own KORE payouts, with their external keys (Ops R-B1)
       if (c.intakeStuck) return Array.from({ length: 100 }, (_, i) => ({ voteStaple: { blocksHash: { toString: () => "STUCK" }, timestamp: () => new Date(c.now()), blocks: [] } }));
-      const rows = [...c.published].map((p, i) => ({ ...p, i })).sort((a, b) => b.t - a.t || b.i - a.i).map((p) => ({
-        voteStaple: { blocksHash: { toString: () => `P${p.i}` }, timestamp: () => new Date(p.t), blocks: [{ account: ADDR.intake, hash: `PB${p.i}`, operations: [{ type: 0, to: p.to, token: ADDR.kore, amount: p.amount, external: p.key }] }] },
-      }));
-      if (c.genesis) rows.push(old(account));
-      return page(rows, startBlocksHash);
+      return page(c.intakeRows(), startBlocksHash);
     }
     if (account !== ADDR.sink) throw new Error("history of the wrong account");
     const rows = [...c.staples].sort((a, b) => b.t - a.t).map((s) => ({
@@ -43,7 +39,30 @@ function mockClient({ kta = 10n * ONE_KTA, kore = 20_000_000n, fee = FEE_RAW, st
     if (c.genesis) rows.push(old(account));
     return page(rows, startBlocksHash);
   };
-  c.client = { getHistory: (account, opts) => c._history(account, opts) };
+  // Ops R-1: the shaft's blocks are a hash chain (each block's previous is the next older one), down to an old shaft block
+  // from before any pitDay1, as on mainnet (fee block + payout block per staple there; one block here is enough).
+  c.intakeRows = () => {
+    const rows = [...c.published].map((p, i) => ({ ...p, i })).sort((a, b) => b.t - a.t || b.i - a.i).map((p) => ({
+      voteStaple: { blocksHash: { toString: () => `P${p.i}` }, timestamp: () => new Date(p.t), blocks: [{ account: ADDR.intake, hash: `PB${p.i}`, operations: [{ type: 0, to: p.to, token: ADDR.kore, amount: p.amount, external: p.key }] }] },
+    }));
+    if (c.genesis) rows.push({ voteStaple: { blocksHash: { toString: () => "G-shaft" }, timestamp: () => new Date("2025-01-01T00:00:00Z"), blocks: [{ account: ADDR.intake, hash: "GB-shaft", previous: "GB-older", operations: [] }] } });
+    rows.forEach((r, k) => { const b = r.voteStaple.blocks[0]; if (k + 1 < rows.length && b.previous === undefined) b.previous = rows[k + 1].voteStaple.blocks[0].hash; });
+    return rows;
+  };
+  // Every rep reports the shaft head (the newest block of the full chain); c.repHeads overrides one rep's answer (lag).
+  c.repHeads = {};
+  const reps = [{ endpoints: { api: "rep1" } }, { endpoints: { api: "rep2" } }, { endpoints: { api: "rep3" } }];
+  c.client = {
+    getHistory: (account, opts) => c._history(account, opts),
+    get representatives() { return c.noReps ? [] : reps; },
+    getAccountHeadInfo: async (account, rep) => {
+      if (account !== ADDR.intake) throw new Error("head of the wrong account");
+      const api = rep?.endpoints?.api;
+      if (c.repHeads[api] === "error") throw new Error("rep down");
+      const h = c.repHeads[api] ?? c.intakeRows()[0]?.voteStaple.blocks[0].hash;
+      return h ? { block: { hash: h }, height: 1n } : null;
+    },
+  };
   c.balance = async (t) => { if (c.failBalance) { c.failBalance -= 1; throw new Error("balance read failed"); } return tok(t) === BASE ? c.kta : c.kore; };
   c.pendingBlock = async () => c.pending;
   c.initBuilder = () => {
@@ -666,25 +685,59 @@ async function r1(twist) {
   if (twist === "b64") ext((e) => Buffer.from(String(e)).toString("base64"));
   if (twist === "hex") ext((e) => Buffer.from(String(e)).toString("hex"));
   if (twist === "none") ext(() => undefined);
+  // Ops R-1: the node leaves out the paid row but still returns older rows. dropmid: a newer shaft send sits above the gap,
+  // so only the hash chain shows it. headlag: the paid row is the shaft head, so the walk looks whole and only the reps'
+  // head (which every rep reports as the paid block) shows it.
+  const paid = (r) => r.voteStaple.blocks.some((b) => b.operations.some((op) => op.external === first.key));
+  if (twist === "dropmid") { c.published.push({ to: W(9), amount: 1n, key: `kore-${W(9)}-1`, t: t + 1000, fee: 0n }); intake((rows) => rows.filter((r) => !paid(r))); }
+  if (twist === "headlag") intake((rows) => rows.filter((r) => !paid(r)));
   await rp({ dir, client: c, ...base, now: () => t + 8 * 60_000, sleep: async () => {}, steps: 1 });
   await rp({ dir, client: c, ...base, now: () => t + 10 * 60_000, sleep: async () => {}, steps: 1 });
   const p = stateOf(dir);
-  const r = { n: c.published.filter((x) => x.to === first.to).length, status: p.intents[key].status, hold: existsSync(`${dir}/PAYHOLD`), alerts: p.alerts.map((a) => a[1]) };
+  const r = { n: c.published.filter((x) => x.to === first.to).length, status: p.intents[key].status, hold: existsSync(`${dir}/PAYHOLD`), alerts: p.alerts.map((a) => a[1]), texts: p.alerts.map((a) => String(a[2])) };
   rmSync(dir, { recursive: true });
   return r;
 }
 {
   const e = await r1("empty");
-  check("13a B-1 Ops repro, shaft history page empty: no second send, not voided, PAYHOLD + PAYOUT_WAIT_HISTORY", e.n === 1 && e.status === "intent" && e.hold && e.alerts.includes("PAYOUT_WAIT_HISTORY") && !e.alerts.includes("PAYOUT_VOID"), JSON.stringify(e));
+  check("13a B-1 Ops repro, shaft history page empty: no second send, not voided, PAYHOLD + PAYOUT_WAIT_HISTORY", e.n === 1 && e.status === "intent" && e.hold && e.alerts.includes("PAYOUT_WAIT_HISTORY") && !e.alerts.includes("PAYOUT_VOID") && e.texts.some((x) => /shaft history incomplete/.test(x)), JSON.stringify(e));
   const s = await r1("short");
   check("13b B-1 shaft history short page that never reaches the intent time: no second send, PAYHOLD + PAYOUT_WAIT_HISTORY", s.n === 1 && s.status === "intent" && s.hold && s.alerts.includes("PAYOUT_WAIT_HISTORY"), JSON.stringify(s));
   const k2 = await r1("skew2");
   check("13c B-1 box clock 2 min fast (staple stamped 2 min before it.at): key found, marked paid, no second send", k2.n === 1 && k2.status === "sent" && !k2.hold, JSON.stringify(k2));
   const k14 = await r1("skew14");
   check("13d B-1 staple 14 min before it.at: still inside the 15 min window, paid once", k14.n === 1 && k14.status === "sent" && !k14.hold, JSON.stringify(k14));
+  for (const tw of ["dropmid", "headlag"]) {
+    const r = await r1(tw);
+    check(`13r Ops R-1 node drops the paid row but returns older ones (${tw}): no second send, not voided, PAYHOLD + PAYOUT_WAIT_HISTORY`, r.n === 1 && r.status === "intent" && r.hold && r.alerts.includes("PAYOUT_WAIT_HISTORY") && !r.alerts.includes("PAYOUT_VOID"), JSON.stringify(r));
+  }
   for (const tw of ["b64", "hex", "none"]) {
     const r = await r1(tw);
     check(`13e B-1/N-1 the send's external comes back as ${tw}: unkeyed send to the wallet for the amount -> PAYOUT_UNPROVEN, PAYHOLD, no second send`, r.n === 1 && r.status === "intent" && r.hold && r.alerts.includes("PAYOUT_UNPROVEN") && !r.alerts.includes("PAYOUT_VOID"), JSON.stringify(r));
+  }
+}
+// Ops R-1 freshness gate: the send never went out (crash before publish), the history is whole and the key is absent, so
+// the void is right, but only once every rep agrees on the shaft head the walk saw.
+async function rv(mod) {
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1(), crash: "before" });
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  const [it] = open(stateOf(dir));
+  mod(c);
+  await rp({ dir, client: c, ...base, now: () => t + 8 * 60_000, sleep: async () => {}, steps: 1 });
+  const p = stateOf(dir);
+  const r = { sends: c.published.length, status: Object.values(p.intents).find((v) => v.w === it.w && v.at === it.at)?.status, hold: existsSync(`${dir}/PAYHOLD`), alerts: p.alerts.map((a) => a[1]) };
+  rmSync(dir, { recursive: true });
+  return r;
+}
+{
+  const ok = await rv(() => {});
+  check("13s R-1 all reps agree on the shaft head the walk saw: the void still happens (no hold)", ok.alerts.includes("PAYOUT_VOID") && !ok.hold && !ok.alerts.includes("PAYOUT_WAIT_HISTORY"), JSON.stringify(ok));
+  for (const [name, mod] of [["one rep reports another head (lag)", (c) => { c.repHeads.rep2 = "PB-older"; }], ["one rep errors", (c) => { c.repHeads.rep3 = "error"; }], ["one rep reports no head", (c) => { c.repHeads.rep1 = null; c.client.getAccountHeadInfo = ((g) => async (a, rep) => (rep.endpoints.api === "rep1" ? null : g(a, rep)))(c.client.getAccountHeadInfo); }], ["no reps known", (c) => { c.noReps = true; }]]) {
+    const r = await rv(mod);
+    check(`13t R-1 ${name}: not voided, PAYHOLD + PAYOUT_WAIT_HISTORY, no send`, !r.alerts.includes("PAYOUT_VOID") && r.hold && r.alerts.includes("PAYOUT_WAIT_HISTORY") && r.sends === 0, JSON.stringify(r));
   }
 }
 {
@@ -746,6 +799,15 @@ async function r1(twist) {
   await rp({ dir: d2, client: c2, ...base, now: () => t, sleep: async () => {}, steps: 1 });
   check("13i N-3 legacyUntil 02:00Z on pit day 1 covers a legacy kore- send at 01:00Z: seeds and pays", existsSync(`${d2}/pit-state.json`) && c2.published.length === 4, `state ${existsSync(`${d2}/pit-state.json`)} published ${c2.published.length} ${existsSync(`${d2}/HALT`) ? readFileSync(`${d2}/HALT`, "utf8") : ""}`);
   rmSync(d2, { recursive: true });
+  // 13u/13v Ops N-6: the cap is start + 1 day - 15 min (settle looks back 15 min before a day's end).
+  for (const [lu, bad, name] of [["2026-11-02T23:45:00.000Z", true, "13u N-6 legacyUntil 23:45Z on pit day 1 (start + 1 day - 15 min): refused"], ["2026-11-02T23:44:59.999Z", false, "13v N-6 legacyUntil 23:44:59.999Z: not refused"]]) {
+    const d = setup(); init(d, DAY1, "live", { legacyUntil: lu });
+    const cx = mockClient({ staples: day1() });
+    let th = ""; try { await rp({ dir: d, client: cx, ...base, now: () => t, sleep: async () => {}, steps: 1 }); } catch (e) { th = e.message; }
+    const refused = /legacyUntil .* could hide pit sends/.test(th);
+    check(name, refused === bad && (bad ? !existsSync(`${d}/pit-state.json`) : existsSync(`${d}/pit-state.json`)), th);
+    rmSync(d, { recursive: true });
+  }
 }
 {
   // 13j Ops O22: the wall-day and hour fee rooms are in the fee-block cap, not only in the quote check.
