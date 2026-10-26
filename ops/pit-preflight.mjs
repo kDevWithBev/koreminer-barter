@@ -22,7 +22,7 @@ try {
   out(`sdk ${ver} index.js ${createHash("md5").update(readFileSync(entry)).digest("hex").slice(0, 8)}`);
   const m = await import(pathToFileURL(entry).href); const KN = m.default ?? m;
   const sc = await import(`${C}/sdk-contract.mjs`); const { ADDR } = await import(`${C}/pit.mjs`);
-  const { pullSince } = await import(`${C}/chain.mjs`); const { runPit } = await import(`${C}/pit-run.mjs`);
+  const { pullSince, findKeyedSends, headAgreed } = await import(`${C}/chain.mjs`); const { runPit, readConfig } = await import(`${C}/pit-run.mjs`);
   if (ver !== sc.SDK_VERSION) done(`PREFLIGHT_FAIL sdk ${ver} is not ${sc.SDK_VERSION}`, 1);
   const uc = sc.readOnlyClient(KN, ADDR.intake);
   const miss = sc.sdkMissing(KN, uc);
@@ -33,6 +33,18 @@ try {
   let t = Date.now(); const f = await pullSince(uc, ADDR.sink, { stopBeforeMs: Date.parse(`${cfg.pitDay1}T00:00:00Z`) });
   out(`fire history: complete ${f.complete}, ${f.rows.length} rows since ${cfg.pitDay1}, ${Date.now() - t} ms`);
   if (!f.complete) done("PREFLIGHT_FAIL fire history did not reach a row before pit day 1", 1);
+  // R-1: the shaft walk must link block to block and every rep must report its head (the gate before any void).
+  t = Date.now(); const h = await findKeyedSends(uc, ADDR.intake, { sinceMs: Date.now() - 2 * 86_400_000, koreText: ADDR.kore });
+  const ag = h.complete ? await headAgreed(uc, ADDR.intake, h.head) : { ok: false, why: "walk incomplete" };
+  out(`shaft walk: complete ${h.complete}${h.broken ? ` (${h.broken})` : ""}, head ${String(h.head ?? "none").slice(0, 8)}, reps agree ${ag.ok}${ag.ok ? "" : ` (${ag.why})`}, ${Date.now() - t} ms`);
+  if (!h.complete || !ag.ok) done("PREFLIGHT_FAIL the shaft hash-chain walk or the rep head check did not pass", 1);
+  // A LIVE config in the stage (the upgrade stage) must read as live, pitDay1-1 ladder, start at 00:00Z.
+  if (existsSync(`${G}/ops/pit-config.live-wednesday.json`)) {
+    const L = `${T}/live`; mkdirSync(L); cpSync(`${G}/ops/pit-config.live-wednesday.json`, `${L}/pit-config.json`);
+    const lc = readConfig(L); const li = JSON.parse(readFileSync(`${G}/ops/pit-init.live-wednesday`, "utf8"));
+    out(`live config: ${lc.test ? "test" : "live"} ${lc.pitDay1} ladderLast ${lc.ladderLast} start ${new Date(lc.startMs).toISOString()}, init ${li.mode} ${li.pitDay1}`);
+    if (lc.test || li.mode !== "live" || li.pitDay1 !== lc.pitDay1 || lc.pitDay1 !== "2026-10-29" || li.legacyUntil !== undefined) done("PREFLIGHT_FAIL the LIVE config or pit-init is not live 2026-10-29", 1);
+  }
   const S = `${T}/d`; mkdirSync(`${S}`); mkdirSync(`${T}/pub`);
   writeFileSync(`${S}/pit-config.json`, JSON.stringify({ ...cfg, ladderSeed: `${G}/${cfg.ladderSeed.replace(/^.*\/fixtures\//, "fixtures/")}`, publicDir: `${T}/pub` }));
   cpSync(`${G}/ops/pit-init.test-tuesday`, `${S}/pit-init`);
