@@ -30,7 +30,7 @@ function mockClient({ kta = 10n * ONE_KTA, kore = 20_000_000n, fee = FEE_RAW, st
   c._history = async (account, { startBlocksHash } = {}) => {
     if (account === ADDR.intake) { // the shaft's own KORE payouts, with their external keys (Ops R-B1)
       if (c.intakeStuck) return Array.from({ length: 100 }, (_, i) => ({ voteStaple: { blocksHash: { toString: () => "STUCK" }, timestamp: () => new Date(c.now()), blocks: [] } }));
-      return page(c.intakeRows(), startBlocksHash);
+      return page(c.intakeRows().slice(c.historyLag ?? 0), startBlocksHash); // historyLag: a rep that serves an old prefix
     }
     if (account !== ADDR.sink) throw new Error("history of the wrong account");
     const rows = [...c.staples].sort((a, b) => b.t - a.t).map((s) => ({
@@ -51,10 +51,10 @@ function mockClient({ kta = 10n * ONE_KTA, kore = 20_000_000n, fee = FEE_RAW, st
   };
   // Every rep reports the shaft head (the newest block of the full chain); c.repHeads overrides one rep's answer (lag).
   c.repHeads = {};
-  const reps = [{ endpoints: { api: "rep1" } }, { endpoints: { api: "rep2" } }, { endpoints: { api: "rep3" } }];
+  const reps = [{ endpoints: { api: "rep1" } }, { endpoints: { api: "rep2" } }, { endpoints: { api: "rep3" } }, { endpoints: { api: "rep4" } }]; // the SDK's 4 mainnet reps
   c.client = {
     getHistory: (account, opts) => c._history(account, opts),
-    get representatives() { return c.noReps ? [] : reps; },
+    get representatives() { return c.noReps ? [] : c.oneRep ? reps.slice(0, 1) : reps; },
     getAccountHeadInfo: async (account, rep) => {
       if (account !== ADDR.intake) throw new Error("head of the wrong account");
       const api = rep?.endpoints?.api;
@@ -610,6 +610,41 @@ const kta = (raw) => (Number(raw) / 1e18).toFixed(5);
   rmSync(d6, { recursive: true });
 }
 
+// ---- 11s. Sage N-1: a fresh live start needs the shaft head agreed by every rep (re-upgrade after a rollback) ----
+{
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  for (const [name, mod] of [["one rep lags", (c) => { c.repHeads.rep2 = "PB-older"; }], ["one rep errors", (c) => { c.repHeads.rep3 = "error"; }], ["no reps known", (c) => { c.noReps = true; }]]) {
+    const dir = setup();
+    writeFileSync(`${dir}/SEND`, "on\n");
+    const c = mockClient({ staples: day1() }); mod(c);
+    let msg = ""; try { await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 }); } catch (e) { msg = e.message; }
+    check(`11s Sage N-1 fresh live start, ${name}: refuses (head not agreed), HALT, no state, pit-init kept, no send`, /shaft head not agreed/.test(msg) && existsSync(`${dir}/HALT`) && !existsSync(`${dir}/pit-state.json`) && existsSync(`${dir}/pit-init`) && c.published.length === 0, msg);
+    rmSync(dir, { recursive: true });
+  }
+  const dir = setup();
+  const c = mockClient({ staples: day1() });
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  check("11t Sage N-1 all reps agree: the fresh live start seeds as before", existsSync(`${dir}/pit-state.json`) && existsSync(`${dir}/pit-init.used`) && !existsSync(`${dir}/HALT`));
+  rmSync(dir, { recursive: true });
+}
+
+// ---- 11u/11v. Ops review3 F1 repro (rc-init) and F2: whole live dir lost, a fresh live pit-init, and a history that lags
+// (the newest shaft rows left out, the rest consistent, so the walk is complete). With 4 honest reps the head check refuses
+// (before: 3 -> 6 sends, no HALT). With one known rep that lags along with the history, F2 refuses (fewer than 2 reps).
+for (const [name, mod, why] of [["4 honest reps", () => {}, /shaft head not agreed \(head GB-shaft vs reps/], ["one rep that lags too (F2)", (c) => { c.oneRep = true; c.repHeads.rep1 = "GB-shaft"; }, /fewer than 2 representatives/]]) {
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1() });
+  await rp({ dir, client: c, ...base, now: () => Date.parse("2026-11-03T05:00:00Z"), sleep: async () => {}, steps: 2 });
+  const paid = c.published.length;
+  for (const f of readdirSync(dir)) if (!["pit-config.json", "SEND"].includes(f)) rmSync(`${dir}/${f}`, { recursive: true });
+  init(dir, DAY1, "live");
+  c.historyLag = paid; mod(c);
+  let msg = ""; try { await rp({ dir, client: c, ...base, now: () => Date.parse("2026-11-03T05:30:00Z"), sleep: async () => {}, steps: 2 }); } catch (e) { msg = e.message; }
+  check(`11${name.startsWith("4") ? "u" : "v"} Ops F1/F2 lost dir + fresh live init + lagging history, ${name}: refuses with HALT, still ${paid} sends, nothing seeded`, paid === 3 && why.test(msg) && existsSync(`${dir}/HALT`) && c.published.length === paid && !existsSync(`${dir}/pit-state.json`), `${msg} sends ${c.published.length}`);
+  rmSync(dir, { recursive: true });
+}
+
 // ---- 12. Sage S1, S4 and Ops nb5, nb7 ----
 {
   const dir = setup();
@@ -863,6 +898,96 @@ async function rv(mod) {
   await rp({ dir, client: c, ...base, now: () => t + 8 * 60_000, sleep: async () => {}, steps: 1 });
   const q = stateOf(dir);
   check("13n O35 more than one open intent: PAYHOLD, both left open, nothing voided or sent", existsSync(`${dir}/PAYHOLD`) && open(q).length === 2 && c.published.length === 0 && !q.alerts.some((x) => x[1] === "PAYOUT_VOID"));
+  rmSync(dir, { recursive: true });
+}
+
+
+// ---- 14. Bob, Oct 26 (Trey's Oct 25 freeze): the LIVE pit 2026-10-29 from the reviewed live config ----
+// A: Oct 26-28 are not ladder days. Streak, rank, shields and shields used carry over from the Oct 25 snapshot exactly;
+//    the one planned difference is Bob's Oct 26 seeded Practice Shield (non-frozen wallets at streak >= 14 without one).
+// B: a fire send from 2026-10-29 00:00Z on, landing while the runner is stopped or still in TEST, counts for pit day 1.
+{
+  const { shieldView } = await import("./pit-run.mjs");
+  const { rungName } = await import("./ladder.mjs");
+  const live = JSON.parse(readFileSync(new URL("./ops/pit-config.live-wednesday.json", import.meta.url), "utf8"));
+  const snapW = JSON.parse(readFileSync(SNAP, "utf8")).wallets;
+  const mk = () => { const dir = mkdtempSync(`${tmpdir()}/pit-carry-`); writeFileSync(`${dir}/pit-config.json`, JSON.stringify({ ...live, ladderSeed: SNAP, publicDir: `${dir}/www` })); init(dir, "2026-10-29", "live"); return dir; };
+  // carry: every field of the card's ladder record, pit vs snapshot. Returns the differing wallets (seeded practice listed apart).
+  const carry = (pit) => {
+    const bad = []; const seeded = [];
+    for (const [w, v] of Object.entries(snapW)) {
+      const lw = pit.ladder[w]; if (!lw) { bad.push(`${w.slice(-6)}:missing`); continue; }
+      const want = structuredClone(v.ladder.shields); if (lw.seeded_practice) { want.practice.held = true; seeded.push(w.slice(-4)); }
+      const got = { s: lw.streak, r: lw.best >= 0 ? rungName(lw.best) : null, sh: JSON.stringify(shieldView(lw)), u: lw.used_total };
+      const exp = { s: v.mining_streak, r: v.rank_rung_from_streak, sh: JSON.stringify(want), u: v.ladder.shieldsUsed };
+      if (JSON.stringify(got) !== JSON.stringify(exp)) bad.push(`${w.slice(-6)}:${JSON.stringify(got)}!=${JSON.stringify(exp)}`);
+    }
+    if (Object.keys(pit.ladder).length !== Object.keys(snapW).length) bad.push(`ladder has ${Object.keys(pit.ladder).length} wallets`);
+    return { bad, seeded };
+  };
+  const cfgL = readConfig(mk());
+  check("14a live config: pit day 1 2026-10-29 starts 00:00Z, ladderLast 2026-10-28", !cfgL.test && cfgL.startMs === Date.parse("2026-10-29T00:00:00Z") && cfgL.ladderLast === "2026-10-28");
+  const seed = carry(freshPit(cfgL));
+  check("14b A: fresh live pit == Oct 25 snapshot for all 17 wallets (streak, rank, shields, used); only hd2i's seeded Practice Shield differs", seed.bad.length === 0 && seed.seeded.join() === "hd2i", `${seed.bad.join(" ")} seeded ${seed.seeded.join()}`);
+  // The runner: TEST until U2, first LIVE start Wed 9:40 PM ET (01:40Z) with sends already on chain from 00:00Z on.
+  const sends = [
+    staple("2026-10-28T23:59:59.000Z", [{ from: W2, ops: [{ token: BASE, amount: K(5) }] }]), // Wed 7:59:59 PM ET: before pit day 1
+    staple("2026-10-29T00:00:00.000Z", [{ from: W1, ops: [{ token: BASE, amount: K(3) }] }]), // 8:00 PM ET sharp
+    staple("2026-10-29T00:20:00.000Z", [{ from: ADDR.hd2i, ops: [{ token: BASE, amount: K(2) }] }]), // runner in TEST
+    staple("2026-10-29T01:35:00.000Z", [{ from: W3, ops: [{ token: BASE, amount: K(1) }] }]), // runner stopped by U2
+  ];
+  const dir = mk(); writeFileSync(`${dir}/SEND`, "on\n");
+  const client = mockClient({ staples: sends });
+  const ck = clock("2026-10-29T01:42:00.000Z");
+  await rp({ dir, client, base: BASE, baseText: BASE, koreAccount, accountFrom, now: ck.now, sleep: ck.sleep, steps: 1, ...quiet });
+  const first = stateOf(dir);
+  const mid = carry(first);
+  check("14c A: after the first LIVE start (Wed 9:42 PM ET) the ladder is still the snapshot carry-over, nothing closed", mid.bad.length === 0 && first.last_pit_closed === null && first.lmeta.last === "2026-10-28" && Object.keys(first.closed).length === 0, mid.bad.join(" "));
+  const st = JSON.parse(readFileSync(`${dir}/pit-sends.json`, "utf8"));
+  const seen = (st.byDay["2026-10-29"] ?? []).map((x) => x.from).sort();
+  check("14d B: the first LIVE pass backfilled the 00:00Z, 00:20Z and 01:35Z sends into 2026-10-29 from history, not the 7:59 PM one", JSON.stringify(seen) === JSON.stringify([ADDR.hd2i, W1, W3].sort()) && !Object.values(st.byDay).flat().some((x) => x.from === W2), seen.join(","));
+  ck.set("2026-10-30T00:11:00.000Z");
+  await rp({ dir, client, base: BASE, baseText: BASE, koreAccount, accountFrom, now: ck.now, sleep: ck.sleep, steps: 1, ...quiet });
+  const p = stateOf(dir); const m = p.alloc["2026-10-29"]?.miners ?? {};
+  check("14e B: Thursday 8:11 PM ET close counts all three for pit day 1 (3 + 2 + 1 KTA), not W2's Oct 28 send", p.last_pit_closed === "2026-10-29" && m[W1] === K(3) && m[ADDR.hd2i] === K(2) && m[W3] === K(1) && !(W2 in m), JSON.stringify(m, (k, v) => (typeof v === "bigint" ? String(v) : v)));
+  const h = p.ladder[ADDR.hd2i]; const zb = p.ladder[ADDR.testB];
+  check("14f A: the first ladder day is 2026-10-29 (no Oct 26-28 step): hd2i 15 -> 16 with its shield; frozen aabz6zxb 15 unchanged; senders W1/W3 at 1", p.lmeta.last === "2026-10-29" && h.streak === 16 && h.shields === 1 && h.used_total === 0 && zb.streak === 15 && zb.frozen && p.ladder[W1].streak === 1 && p.ladder[W3].streak === 1);
+  const s13 = Object.entries(snapW).filter(([w, v]) => v.mining_streak === 13).map(([w]) => p.ladder[w].streak);
+  check("14g a 13-streak wallet that does not send on pit day 1 resets at that close (the normal day-1 miss, not Oct 26-28)", s13.length === 5 && s13.every((x) => x === 0), s13.join());
+  rmSync(dir, { recursive: true });
+}
+
+// ---- 14h. Trey, Oct 26 3:36 PM plan: TEST -> LIVE on Wed Oct 28 MORNING (about 11 AM ET), 13 h before pit day 1 opens ----
+// The LIVE runner is up and passing all Wednesday afternoon. Wednesday sends must not count, the carry-over must hold, and
+// sends from 00:00Z on must count at the Thursday 8:10 PM ET close, with the chain growing between passes.
+{
+  const { rungName } = await import("./ladder.mjs");
+  const live = JSON.parse(readFileSync(new URL("./ops/pit-config.live-wednesday.json", import.meta.url), "utf8"));
+  const snapW = JSON.parse(readFileSync(SNAP, "utf8")).wallets;
+  const dir = mkdtempSync(`${tmpdir()}/pit-wed-`); writeFileSync(`${dir}/pit-config.json`, JSON.stringify({ ...live, ladderSeed: SNAP, publicDir: `${dir}/www` })); init(dir, "2026-10-29", "live");
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const client = mockClient({ staples: [staple("2026-10-28T14:00:00.000Z", [{ from: W1, ops: [{ token: BASE, amount: K(7) }] }])] });
+  const ck = clock("2026-10-28T15:00:00.000Z");
+  const pass = async (at) => { ck.set(at); await rp({ dir, client, base: BASE, baseText: BASE, koreAccount, accountFrom, now: ck.now, sleep: ck.sleep, steps: 1, ...quiet }); };
+  await pass("2026-10-28T15:00:00.000Z"); // Wed 11 AM ET: the WED box's first LIVE pass
+  const p0 = stateOf(dir);
+  check("14h Wed 11 AM ET LIVE start: seeded, nothing closed, ladder last 2026-10-28, no send", existsSync(`${dir}/pit-init.used`) && p0.last_pit_closed === null && p0.lmeta.last === "2026-10-28" && client.published.length === 0);
+  client.staples.push(staple("2026-10-28T20:00:00.000Z", [{ from: W2, ops: [{ token: BASE, amount: K(5) }] }])); // Wed 4 PM ET
+  await pass("2026-10-28T20:05:00.000Z");
+  client.staples.push(staple("2026-10-28T23:59:59.999Z", [{ from: W3, ops: [{ token: BASE, amount: K(9) }] }])); // 1 ms before day 1
+  await pass("2026-10-28T23:59:59.999Z");
+  client.staples.push(staple("2026-10-29T00:00:00.000Z", [{ from: W1, ops: [{ token: BASE, amount: K(3) }] }]));
+  await pass("2026-10-29T00:00:30.000Z");
+  client.staples.push(staple("2026-10-29T12:00:00.000Z", [{ from: ADDR.hd2i, ops: [{ token: BASE, amount: K(2) }] }]));
+  await pass("2026-10-29T12:01:00.000Z");
+  client.staples.push(staple("2026-10-29T23:59:59.000Z", [{ from: W3, ops: [{ token: BASE, amount: K(1) }] }]));
+  await pass("2026-10-30T00:00:30.000Z");
+  const pm = stateOf(dir);
+  check("14i Wed afternoon to Thu 8 PM ET: no close yet, the ladder is still the snapshot carry-over (streaks, ranks)", pm.last_pit_closed === null && pm.lmeta.last === "2026-10-28" && Object.entries(snapW).every(([w, v]) => pm.ladder[w].streak === v.mining_streak && (pm.ladder[w].best >= 0 ? rungName(pm.ladder[w].best) : null) === v.rank_rung_from_streak));
+  await pass("2026-10-30T00:11:00.000Z");
+  const p = stateOf(dir); const m = p.alloc["2026-10-29"]?.miners ?? {};
+  check("14j Thu 8:11 PM ET close: only the 00:00Z, 12:00Z and 23:59:59Z sends count (3 + 2 + 1); Wed sends (14:00Z before the start, 20:00Z, 23:59:59.999Z) do not", p.last_pit_closed === "2026-10-29" && m[W1] === K(3) && m[ADDR.hd2i] === K(2) && m[W3] === K(1) && !(W2 in m) && Object.keys(m).length === 3, JSON.stringify(m, (k, v) => (typeof v === "bigint" ? String(v) : v)));
+  check("14k ladder after the close: first step is 2026-10-29; hd2i 16, frozen aabz6zxb 15", p.lmeta.last === "2026-10-29" && p.ladder[ADDR.hd2i].streak === 16 && p.ladder[ADDR.testB].streak === 15);
   rmSync(dir, { recursive: true });
 }
 

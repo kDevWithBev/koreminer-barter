@@ -19,11 +19,14 @@ try {
   symlinkSync(`${D}/node_modules`, `${C}/node_modules`);
   const entry = createRequire(`${D}/x.js`).resolve("@keetanetwork/keetanet-client");
   const ver = JSON.parse(readFileSync(entry.replace(/client\/index\.js$/, "package.json"), "utf8")).version;
-  out(`sdk ${ver} index.js ${createHash("md5").update(readFileSync(entry)).digest("hex").slice(0, 8)}`);
+  const imd5 = createHash("md5").update(readFileSync(entry)).digest("hex");
+  out(`sdk ${ver} index.js ${imd5.slice(0, 8)}`);
   const m = await import(pathToFileURL(entry).href); const KN = m.default ?? m;
   const sc = await import(`${C}/sdk-contract.mjs`); const { ADDR } = await import(`${C}/pit.mjs`);
   const { pullSince, findKeyedSends, headAgreed } = await import(`${C}/chain.mjs`); const { runPit, readConfig } = await import(`${C}/pit-run.mjs`);
   if (ver !== sc.SDK_VERSION) done(`PREFLIGHT_FAIL sdk ${ver} is not ${sc.SDK_VERSION}`, 1);
+  // Sage N-3: the exact SDK build the code was checked against, not only its version number.
+  if (!sc.SDK_INDEX_MD5 || imd5 !== sc.SDK_INDEX_MD5) done(`PREFLIGHT_FAIL sdk client/index.js md5 ${imd5.slice(0, 8)} is not ${String(sc.SDK_INDEX_MD5).slice(0, 8)}`, 1);
   const uc = sc.readOnlyClient(KN, ADDR.intake);
   const miss = sc.sdkMissing(KN, uc);
   const src = (n) => readFileSync(`${C}/${n}`, "utf8"); const ch = src("chain.mjs");

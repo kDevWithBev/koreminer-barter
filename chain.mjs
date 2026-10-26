@@ -186,11 +186,12 @@ function chainStep(row, account, link) {
 
 // Ops R-1 freshness gate: every representative the client knows must report `head` as the account's head block. A lagging
 // or partial rep that answered the history walk would disagree with the others, so a void then waits. No reps, an error or
-// any disagreement is "not agreed". Read-only.
+// any disagreement is "not agreed". Ops review3 F2: fewer than 2 known reps is "not agreed" too, so a one-rep list (not
+// reachable on SDK 0.18.7, whose main network list is 4 fixed reps) can never make the check vacuous. Read-only.
 export async function headAgreed(client, account, head) {
   const reps = client.client.representatives ?? [];
   if (!head) return { ok: false, why: "the walk saw no block of the account" };
-  if (!reps.length) return { ok: false, why: "no representatives known" };
+  if (reps.length < 2) return { ok: false, why: reps.length ? "fewer than 2 representatives known" : "no representatives known" };
   const got = [];
   for (const rep of reps) {
     let h = "";

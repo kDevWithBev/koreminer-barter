@@ -104,4 +104,5 @@ check("R-1 one rep lags: not agreed", (await headAgreed(headC(["P6", "P5", "P6"]
 check("R-1 the walk's head is behind every rep: not agreed", (await headAgreed(headC(["P7", "P7"]), SH, "P6")).ok === false);
 check("R-1 a rep errors or has no head: not agreed", (await headAgreed(headC(["P6", "error"]), SH, "P6")).ok === false && (await headAgreed(headC(["P6", null]), SH, "P6")).ok === false);
 check("R-1 no reps, or no head from the walk: not agreed", (await headAgreed(headC([]), SH, "P6")).ok === false && (await headAgreed(headC(["P6"]), SH, "")).ok === false);
+check("Ops F2 one known rep, even one that agrees: not agreed (fewer than 2)", (await headAgreed(headC(["P6"]), SH, "P6")).ok === false && /fewer than 2/.test((await headAgreed(headC(["P6"]), SH, "P6")).why) && (await headAgreed(headC(["P6", "P6"]), SH, "P6")).ok === true);
 console.log("chain fire ok");

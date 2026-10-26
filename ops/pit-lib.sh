@@ -7,7 +7,7 @@ RL=/root/koreminer-refund-stage/refund-lib.sh
 [ "$(md5sum < $RL 2>/dev/null | cut -c1-32)" = 75dd45a226d73808c7674ff64caa7ada ] || { echo "Refund helper missing or changed. Nothing changed."; echo "${X}_FAIL"; exit 1; }
 . $RL
 G=/root/koreminer-pit-stage; W=/var/www/koreminer; PT=$D/pit-test; TS="EXIT HUP INT TERM"
-PIT="run.mjs:a4d4c2f0495307205c04d6f8feae04d2 chain.mjs:1f365c70532c3d1271de83392294ad60 pit.mjs:0279f83880035455843b90f832171e87 pit-run.mjs:2300daecc86cfba3f7be73ddbbac3a88 ladder.mjs:85da517098a7444dfc73401ce9369a96 fixtures/streak-snapshot-20261026T003137Z.json:47a2d78b84ab72c80bb4f21d763adff1"
+PIT="run.mjs:a4d4c2f0495307205c04d6f8feae04d2 chain.mjs:37972d0a752122c200efa3a450335911 pit.mjs:0279f83880035455843b90f832171e87 pit-run.mjs:a9158da3453c38ff7fbee39687190bc1 ladder.mjs:85da517098a7444dfc73401ce9369a96 fixtures/streak-snapshot-20261026T003137Z.json:47a2d78b84ab72c80bb4f21d763adff1"
 CARD="site/card.js:6ff807ea0aa873b87506405c95fed2de"
 CFGS="ops/pit-config.test-tuesday.json:020642ae76945d4eb83ef56ccf2b94f3 ops/pit-init.test-tuesday:a4e8b9816666ac49a127fbfbf59fd7eb"
 CFGD="pit-config.json:020642ae76945d4eb83ef56ccf2b94f3"; INIT="pit-init:a4e8b9816666ac49a127fbfbf59fd7eb"
@@ -25,9 +25,9 @@ pitback() { local b=$1; mkdir -m700 -p $b; cp -p $D/run.mjs $D/chain.mjs $b/; [ 
 cpin() { rm -f "$2.new"; cp ${3:-} "$1" "$2.new" && mv -f "$2.new" "$2"; }
 # pitin <B>: SEND off, pit files and the TEST config in. Runner must be stopped.
 pitin() { local b=$1 p f; rm -f $D/SEND; mkdir -p $D/fixtures; chown --reference=$D/books.mjs $D/fixtures
-  for p in $PIT; do f=${p%%:*}; cp $G/$f $D/$f.new; chown --reference=$D/books.mjs $D/$f.new; chmod 644 $D/$f.new; mv -f $D/$f.new $D/$f; done
-  for f in pit-config.json:pit-config.test-tuesday.json pit-init:pit-init.test-tuesday; do p=$D/${f%%:*}; cp $G/ops/${f#*:} $p.new
-    chown --reference=$D/books.mjs $p.new; chmod 644 $p.new; mv -f $p.new $p; done
+  for p in $PIT; do f=${p%%:*}; cp $G/$f $D/$f.new && chown --reference=$D/books.mjs $D/$f.new && chmod 644 $D/$f.new && mv -f $D/$f.new $D/$f || { LEFT="copy of $f failed"; return 1; }; done
+  for f in pit-config.json:pit-config.test-tuesday.json pit-init:pit-init.test-tuesday; do p=$D/${f%%:*}; cp $G/ops/${f#*:} $p.new &&
+    chown --reference=$D/books.mjs $p.new && chmod 644 $p.new && mv -f $p.new $p || { LEFT="copy of ${f#*:} failed"; return 1; }; done
   vers "$PIT $CFGD $INIT" || return 1; [ "$(sendst)" = absent ] || { LEFT="SEND still there"; return 1; }; return 0; }
 # pitout <B>: back to 7ee5308: pit-config.json and an unused pit-init out, the added code out, old files and SEND back.
 pitout() { local b=$1 f; rm -f $D/pit-config.json $D/pit-init; for f in $ADD; do rm -f $D/$f; done

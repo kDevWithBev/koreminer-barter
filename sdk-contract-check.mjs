@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { CLIENT_CALLS, KNOWN_CALLS, SDK_VERSION, callsIn, readOnlyClient, sdkMissing } from "./sdk-contract.mjs";
+import { CLIENT_CALLS, KNOWN_CALLS, SDK_INDEX_MD5, SDK_VERSION, callsIn, readOnlyClient, sdkMissing } from "./sdk-contract.mjs";
 import { findKeyedSends, headAgreed, pullSince, readFireStaple } from "./chain.mjs";
 import { ADDR } from "./pit.mjs";
 
@@ -18,7 +18,7 @@ try { entry = createRequire(process.env.KEETA_SDK ? `${process.env.KEETA_SDK.rep
 if (!entry) { console.log("FAIL the real SDK is not loadable (set KEETA_SDK); this test never passes on a fake"); console.log("SDK_CONTRACT_FAIL 1"); process.exit(1); }
 const pkg = JSON.parse(readFileSync(entry.replace(/client\/index\.js$/, "package.json"), "utf8"));
 check(`SDK is the server's version ${SDK_VERSION}`, pkg.version === SDK_VERSION, pkg.version);
-check("SDK client/index.js md5 is the server's (4ccd1d46)", createHash("md5").update(readFileSync(entry)).digest("hex") === "4ccd1d4637c00aec945a499492ed4fee");
+check("SDK client/index.js md5 is the server's (4ccd1d46)", createHash("md5").update(readFileSync(entry)).digest("hex") === SDK_INDEX_MD5 && SDK_INDEX_MD5 === "4ccd1d4637c00aec945a499492ed4fee");
 const mod = await import(pathToFileURL(entry).href);
 const KN = mod.default ?? mod;
 
@@ -49,6 +49,8 @@ const al = [...callsIn("const c = client;\nc.getHistory(1);\nconst { balance } =
 check("N-8 the scan reports the client copied, destructured, handed on, indexed, and client.client used bare", ["const c = client;", "const { balance } = client;", "foo(client);", "client[\"x\"]();"].every((l) => al.includes(`alias: ${l}`)) && al.some((c) => c.startsWith("alias: client.client used bare")), JSON.stringify(al));
 const ba = [...callsIn("const b2 = client.initBuilder();\nb2.sendAll(1);\nawait client.initBuilder().computeFeeBlock(x);\nclient.client?.getVersion();\n")];
 check("N-8 the scan follows a builder kept under another name, a chained builder call, and client.client?.", ["builder.sendAll", "builder.computeFeeBlock", "client.client.getVersion"].every((c) => ba.includes(c)) && !ba.some((c) => c.startsWith("alias:")), JSON.stringify(ba));
+const f3 = [...callsIn("client?.client?.getAccountInfo(a);\nconst o = { ...client };\nconst p = [...client.client.representatives];\n")];
+check("Ops F3 the scan catches client?.client?.x() and { ...client } (spread copies)", f3.includes("client.client.getAccountInfo") && f3.some((c) => /^alias: const o = \{ SPREAD client \};$/.test(c)) && f3.includes("client.client.representatives") && f3.filter((c) => c.startsWith("alias:")).length === 1, JSON.stringify(f3));
 check("N-8 the walkers handed the client, and function parameters, are not flagged", [...callsIn("async function f(client, x) {\n  return pullSince(client, a, {});\n}\nheadAgreed(client, a, h);\n")].every((c) => !c.startsWith("alias:")));
 check("pit-run.mjs, pit.mjs and the pit half of chain.mjs call nothing on the client that this contract does not check", unknown.length === 0 && used.includes("client.client.getHistory"), unknown.join(", "));
 const unused = [...KNOWN_CALLS].filter((c) => !used.includes(c));

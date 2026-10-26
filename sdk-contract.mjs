@@ -2,6 +2,7 @@
 // against the REAL SDK by sdk-contract-check.mjs and by ops/pit-preflight.mjs on the server. Box 3 on Oct 26 fell back
 // because a fake client hid that UserClient has no getHistory. No network calls here, no keys.
 export const SDK_VERSION = "0.18.7"; // /opt/koreminer/node_modules, client/index.js md5 4ccd1d4637c00aec945a499492ed4fee
+export const SDK_INDEX_MD5 = "4ccd1d4637c00aec945a499492ed4fee"; // Sage N-3: the preflight refuses any other client/index.js
 export const CLIENT_CALLS = ["pendingBlock", "balance", "initBuilder", "publishBuilder", "getQuotes"]; // client.X (UserClient)
 export const NETWORK_CALLS = ["getHistory", "getAccountHeadInfo"]; // client.client.X (the UserClient's network Client), any account
 export const NETWORK_PROPS = ["representatives"]; // client.client.X getters (an array of reps), read not called
@@ -40,7 +41,8 @@ const BARE_OK = [
 export function callsIn(src) {
   const out = new Set();
   src = src.replace(/\/\/.*$/gm, ""); // comments are not calls
-  for (const m of src.matchAll(/\bclient\.client\??\.(\w+)/g)) out.add(`client.client.${m[1]}`);
+  src = src.replace(/\.\.\.(\s*)(?=client\b)/g, "SPREAD $1"); // Ops F3: { ...client } is a copy (an alias), not a member access
+  for (const m of src.matchAll(/\bclient\??\.client\??\.(\w+)/g)) out.add(`client.client.${m[1]}`);
   for (const m of src.matchAll(/(?<!\.)\bclient\??\.(?!client\b)(\w+)/g)) out.add(`client.${m[1]}`);
   const builders = new Set(["builder"]);
   for (const m of src.matchAll(/\b(\w+)\s*=\s*(?:await\s+)?client\??\.initBuilder\(\s*\)\s*[;\n]/g)) builders.add(m[1]);
@@ -48,7 +50,7 @@ export function callsIn(src) {
   for (const m of src.matchAll(/\binitBuilder\(\)\.(\w+)/g)) out.add(`builder.${m[1]}`);
   for (const line of src.split("\n")) {
     // a bare client: not followed by . or ?. (client.client counts as a use of client, scanned above)
-    if (!/(?<![\w.$])client\b(?!\s*\??\.)/.test(line.replace(/\bclient\.client\b/g, "C.C"))) continue;
+    if (!/(?<![\w.$])client\b(?!\s*\??\.)/.test(line.replace(/\bclient\??\.client\b/g, "C.C"))) continue;
     if (BARE_OK.some((re) => re.test(line))) continue;
     out.add(`alias: ${line.trim().slice(0, 120)}`);
   }

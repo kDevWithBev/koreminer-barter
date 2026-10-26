@@ -254,6 +254,10 @@ export async function runPit({
       if (legacyUntil !== null && legacyUntil >= cfg.startMs + DAY_MS - SETTLE_LOOKBACK_MS) refuse(`pit-init legacyUntil ${init.legacyUntil} is not before pit day 1 end - 15 min; it could hide pit sends`);
       const h = await findKeyedSends(client, ADDR.intake, { sinceMs: cfg.startMs, koreText });
       if (!h.complete) refuse("shaft history since pit day 1 is incomplete; refusing to seed");
+      // Sage N-1: the R-1 freshness gate, as for a void. A lagging or partial rep can answer the walk without the newest shaft
+      // rows, so a re-upgrade after a rollback could miss pit payouts and pay again. Every rep must report the walk's head.
+      const ag = await headAgreed(client, ADDR.intake, h.head);
+      if (!ag.ok) refuse(`shaft head not agreed (${ag.why}); refusing to seed`);
       const hits = h.sends.filter((s) => s.timeMs >= cfg.startMs && !(legacyUntil !== null && s.timeMs <= legacyUntil) && s.externals.some((e) => e.startsWith("kore-")));
       if (hits.length) refuse(`${hits.length} keyed KORE sends from the shaft since ${cfg.pitDay1}; refusing to seed a fresh pit`);
     }
