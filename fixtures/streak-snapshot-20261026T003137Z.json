@@ -1,0 +1,587 @@
+{
+ "kind": "koreminer-streak-snapshot",
+ "mode": "official",
+ "taken_utc": "2026-10-26T00:31:38.574100Z",
+ "close_edge_utc": "2026-10-26T00:00:00Z",
+ "lookup_updated": "2026-10-26T00:10:40.020Z",
+ "post_close": true,
+ "source": {
+  "base": "https://koreminer.com",
+  "lookup.json": {
+   "md5": "5555927fb47d67fca259ba5b3d76f7fb",
+   "last_modified": "Mon, 26 Oct 2026 00:31:25 GMT"
+  },
+  "barter/ladder.json": {
+   "http": "200",
+   "md5": "26d93accc57e0297e08c8e3dc6efddfc",
+   "last_modified": "Mon, 26 Oct 2026 00:05:01 GMT",
+   "mode": "dry_run",
+   "rungs": {
+    "Practice Shield": 2,
+    "Shift Boss Shield": 0,
+    "Narrator Book": 0,
+    "Barterer": 0
+   },
+   "error": null
+  },
+  "barter/card.js": {
+   "http": "200",
+   "md5": "8b16756b5616e11ad78d90a5ccdb5fcc"
+  },
+  "raw_copies": "/workspace/state/koreminer/sources/20261026T003137Z"
+ },
+ "notes": [
+  "mining_streak = lookup.json miners[w].streak = books.json share.streak[w].count on the server (share.mjs lookup()).",
+  "Rank is derived from the streak (card.js rankStory / ladder rungs 14, 28, 56, 84); it is not stored by the runner.",
+  "Shields exist only in public barter/ladder.json (mode dry_run); the runner (run/share/books.mjs) has no shield state.",
+  "books.json streak.last (date of the last counted day) is not public; a seed should set last to the close day."
+ ],
+ "warnings": [],
+ "count": 17,
+ "wallets": {
+  "keeta_aab2mszmbqiifrxb3245tpwitotec7mqowxywxzdvs7agh5x47xez5nfkiufvvi": {
+   "short": "keeta_aab2…fvvi",
+   "mining_streak": 10,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 10,
+    "streak": 10,
+    "ladderStreak": 10,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "4728"
+  },
+  "keeta_aab3cujp6bgzzzbacn3eyslyzt432cnqs3zbc4mbqqwcpgywfeaomtasbbyvdmi": {
+   "short": "keeta_aab3…vdmi",
+   "mining_streak": 13,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 13,
+    "streak": 13,
+    "ladderStreak": 13,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "30996"
+  },
+  "keeta_aab6z3pj5ywg75f725a3kdyiawwvsupsgcjzukjmjy2ybpqriqdt4a5sks4ocuq": {
+   "short": "keeta_aab6…ocuq",
+   "mining_streak": 12,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 12,
+    "streak": 12,
+    "ladderStreak": 12,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "25876"
+  },
+  "keeta_aabal6jl7dgl3xa6dkzehkbzmzuch3h5yjbmkijyo6vra6xjgzrpfv7gftdkgoy": {
+   "short": "keeta_aaba…kgoy",
+   "mining_streak": 13,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 13,
+    "streak": 13,
+    "ladderStreak": 13,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "2128"
+  },
+  "keeta_aabalimmuxvjq5jvkvpgcnmsmyi4pwpduscrwn263pwlcib4xzpp5pnrdwng4yq": {
+   "short": "keeta_aaba…g4yq",
+   "mining_streak": 0,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 0,
+    "streak": 0,
+    "ladderStreak": 0,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "5095"
+  },
+  "keeta_aabbhuaqbv5tjc25hrih6aqqel4g5fh2c6lhpmjkcxrk2xind2zft2nvhom2fwi": {
+   "short": "keeta_aabb…2fwi",
+   "mining_streak": 0,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 0,
+    "streak": 0,
+    "ladderStreak": 0,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "7179"
+  },
+  "keeta_aabd7qpxd6li6qwkyr4qjlzao7fu6wadr6pwhekxmem2iqtsb27wn5yphdqyv5y": {
+   "short": "keeta_aabd…yv5y",
+   "mining_streak": 13,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 13,
+    "streak": 13,
+    "ladderStreak": 13,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "221019"
+  },
+  "keeta_aabdkkc2fkbj2opullbe34ohrrzdeej3mkx4szevk42mkhz6yfmmi5iupcdsvca": {
+   "short": "keeta_aabd…svca",
+   "mining_streak": 0,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 0,
+    "streak": 0,
+    "ladderStreak": 0,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "5033"
+  },
+  "keeta_aabemrl47xovglalhxxxlfekjd2lz2aioxldryd3zkdafxk3mc4x4ojudtc76fq": {
+   "short": "keeta_aabe…76fq",
+   "mining_streak": 13,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 13,
+    "streak": 13,
+    "ladderStreak": 13,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "18574"
+  },
+  "keeta_aabffpbw6wyeyijyqz4qzmm2aatofkpkkffbetglqniohdxc4opr7i6panndway": {
+   "short": "keeta_aabf…dway",
+   "mining_streak": 13,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 13,
+    "streak": 13,
+    "ladderStreak": 13,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "1312"
+  },
+  "keeta_aabiilnj6yja3g4j7dbn2kkxwcaxq3tdzjvm6kwgare52fsy2dzabekxgeqerki": {
+   "short": "keeta_aabi…erki",
+   "mining_streak": 0,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 0,
+    "streak": 0,
+    "ladderStreak": 0,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "4865"
+  },
+  "keeta_aabik63e6x7svkclg74scrqe373rhy5v4xtbp7lx7wcbkrdk2evpiqcl3cihd2i": {
+   "short": "keeta_aabi…hd2i",
+   "mining_streak": 15,
+   "card_title": "Miner",
+   "card_badge": "Practice Shield",
+   "rank_rung_from_streak": "Practice Shield",
+   "ladder": {
+    "miningStreak": 15,
+    "streak": 15,
+    "ladderStreak": 15,
+    "rank": "Practice Shield",
+    "nextRank": "Shift Boss Shield",
+    "nextAt": 28,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "31561"
+  },
+  "keeta_aabjln6pehydbh5aggj5dsujwjci4aez7ih7tsbwzk4gmsppzuj5g2u5xch4ddi": {
+   "short": "keeta_aabj…4ddi",
+   "mining_streak": 12,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 12,
+    "streak": 12,
+    "ladderStreak": 12,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "1870"
+  },
+  "keeta_aabjveq4wsqzhj27avkdikxn3lwo5zhcv2xt6kqgwk4b55yzfaacrlmww45lu4y": {
+   "short": "keeta_aabj…lu4y",
+   "mining_streak": 0,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 0,
+    "streak": 0,
+    "ladderStreak": 0,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "1903"
+  },
+  "keeta_aabrmmctfikuanrdtlimnedov5bcshc2hmyrjlvqy5h2cvfwntlrkp6cquzakja": {
+   "short": "keeta_aabr…akja",
+   "mining_streak": 0,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 0,
+    "streak": 0,
+    "ladderStreak": 0,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "225"
+  },
+  "keeta_aabsq7gbfu3uw6jfzmnr4bdvdofftk6k2a5apuhvhofjfetobm4nnbcz6umww7a": {
+   "short": "keeta_aabs…ww7a",
+   "mining_streak": 12,
+   "card_title": "Miner",
+   "card_badge": null,
+   "rank_rung_from_streak": null,
+   "ladder": {
+    "miningStreak": 12,
+    "streak": 12,
+    "ladderStreak": 12,
+    "rank": null,
+    "nextRank": "Practice Shield",
+    "nextAt": 14,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": null,
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "15819"
+  },
+  "keeta_aabz6zxbs2n4r7iiobclndobrnowxdf4pjrb5lwe6bvpeo564bot6krjbrsbbvy": {
+   "short": "keeta_aabz…bbvy",
+   "mining_streak": 15,
+   "card_title": "Miner",
+   "card_badge": "Practice Shield",
+   "rank_rung_from_streak": "Practice Shield",
+   "ladder": {
+    "miningStreak": 15,
+    "streak": 15,
+    "ladderStreak": 15,
+    "rank": "Practice Shield",
+    "nextRank": "Shift Boss Shield",
+    "nextAt": 28,
+    "shields": {
+     "practice": {
+      "held": false,
+      "used": false
+     },
+     "shiftBoss": {
+      "held": false,
+      "used": false
+     }
+    },
+    "shieldsUsed": 0,
+    "buyerNights": 0,
+    "buyerRank": null
+   },
+   "excluded_note": "aabz6zxb (TREY_B), excluded from the new mine per spec v4",
+   "lookup_fuel": "0.00000",
+   "lookup_waiting": "0",
+   "lookup_paid": "62986"
+  }
+ }
+}

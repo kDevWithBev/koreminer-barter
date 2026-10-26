@@ -90,3 +90,53 @@ export async function pullNew(client, cursor) {
   }
   return found;
 }
+
+// ---- pit (new model): every op sent to the fire address, one row per (block, op) ----
+// KTA rows can count for mining; KORE and any other token are logged as burns by pit.mjs. No network calls.
+export function readFireStaple(row, { fire = sink, baseText, koreText }) {
+  const staple = row?.voteStaple;
+  if (!staple?.timestamp || !staple?.blocksHash) return null;
+  const timeMs = staple.timestamp().getTime();
+  if (!Number.isFinite(timeMs)) return null;
+  const time = new Date(timeMs).toISOString();
+  const stapleHash = staple.blocksHash.toString();
+  const sends = [];
+  (staple.blocks ?? []).forEach((block, blockIndex) => {
+    const from = text(block.account);
+    const hash = blockHash(block) || `${stapleHash}#${blockIndex}`;
+    (block.operations ?? []).forEach((op, opIndex) => {
+      if (op.type !== 0) return;
+      const to = text(op.to);
+      if (to !== fire) return;
+      const tokenText = text(op.token);
+      const token = tokenText === baseText ? "KTA" : tokenText === koreText ? "KORE" : tokenText || "unknown";
+      let amount = 0n;
+      try { amount = BigInt(op.amount); } catch { amount = 0n; }
+      sends.push({ tx: hash, block: hash, op: opIndex, staple: stapleHash, from, to, token, amount, time, timeMs });
+    });
+  });
+  return { blocksHash: stapleHash, timeMs, sends };
+}
+
+// Newest-first history of `account` back to `cursor` (exclusive), or back past stopBeforeMs when there is no cursor yet.
+// complete is false when the walk ended without reaching either; the caller must not advance its cursor then.
+export async function pullSince(client, account, { cursor = "", stopBeforeMs = null, pageLimit = 1_000 } = {}) {
+  const found = [];
+  let start;
+  for (let page = 0; page < pageLimit; page += 1) {
+    const rows = await client.getHistory(account, { depth: 100, startBlocksHash: start });
+    if (!rows?.length) return { rows: found, complete: true };
+    for (const row of rows) {
+      const hash = row.voteStaple.blocksHash.toString();
+      if (cursor && hash === cursor) return { rows: found, complete: true };
+      const at = row.voteStaple.timestamp?.().getTime?.();
+      if (!cursor && stopBeforeMs !== null && Number.isFinite(at) && at < stopBeforeMs) return { rows: found, complete: true };
+      found.push(row);
+    }
+    if (rows.length < 100) return { rows: found, complete: !cursor };
+    const next = rows[rows.length - 1].voteStaple.blocksHash.toString();
+    if (next === start) return { rows: found, complete: false };
+    start = next;
+  }
+  return { rows: found, complete: false };
+}

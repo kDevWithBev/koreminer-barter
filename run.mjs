@@ -1262,6 +1262,21 @@ async function main() {
   const dustAccount = KeetaNet.lib.Account.fromPublicKeyString(sink);
   const client = KeetaNet.UserClient.fromNetwork("main", wallet);
   const baseText = base.publicKeyString.toString();
+  if (existsSync(`${dir}/pit-config.json`)) {
+    // New model (pit-run.mjs): sends to the fire address, daily pot, oldest due first. Legacy runShaft below is not started.
+    const { runPit } = await import("./pit-run.mjs");
+    await runPit({
+      dir,
+      client,
+      base,
+      baseText,
+      koreAccount: KeetaNet.lib.Account.fromPublicKeyString(kore),
+      accountFrom: (id) => KeetaNet.lib.Account.fromPublicKeyString(id),
+      testFlag: process.argv.includes("--test"),
+    });
+    await client.destroy?.();
+    return;
+  }
   await runShaft({
     dir,
     client,

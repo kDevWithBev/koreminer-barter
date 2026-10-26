@@ -1,0 +1,60 @@
+// site/card.js against copy v1 (kory-2026-10-26-launch-and-card-copy-v1.md md5 9cb35a96, §3/§4/§6). Offline.
+import { readFileSync } from "node:fs";
+import * as card from "./card.js";
+import { ADDR, createPit, makeConfig } from "../pit.mjs";
+import { publicViews } from "../pit-run.mjs";
+
+let failed = 0;
+function check(name, ok, extra = "") { console.log(`${ok ? "ok" : "FAIL"} ${name}${extra ? ` - ${extra}` : ""}`); if (!ok) failed += 1; }
+const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+const W = "keeta_aabd7qpxd6li6qwkyr4qjlzao7fu6wadr6pwhekxmem2iqtsb27wn5yphdqyv5y";
+const lookup = { updated: "2026-11-03T00:15:00.000Z", miners: { [W]: { streak: 16, paid: "4728", waiting: "3", carried: "0.42", ktaToday: "2.50", shareToday: "12.34" } } };
+const ladder = { rungs: { "Practice Shield": 1 }, wallets: [{ wallet: card.shortWallet(W), ladderStreak: 3, rank: "Shift Boss Shield", nextRank: "Practice Shield", nextAt: 14, shields: { practice: { held: false, used: true }, shiftBoss: { held: true, used: false } }, shieldsUsed: 1 }] };
+const v = card.readPlayer({ wallet: W, lookup, ladder });
+check("fuel and the duplicate mining streak are gone", !("fuel" in v) && !("miningStreak" in v) && !("fuel" in v.lines) && !("mining" in v.lines) && !/Fuel|Mining streak/.test(v.text));
+check("buyer nights and the barterer line are hidden", !("buyers" in v.lines) && !("barterer" in v.lines) && !/Buyer|Barterers trade/.test(v.text));
+check("one streak line: 'Streak N (1 shield used)'", v.lines.ladder === "Streak 3 (1 shield used)");
+check("rank keeps the best rung from the ladder", v.lines.rank === "Rank: Shift Boss Shield");
+check("new ktaToday / shareToday / carried lines", v.lines.ktaToday === "Counted today: 2.5 KTA" && v.lines.shareToday === "Your share of today's KORE: 12.34%" && v.lines.carried === "Part of a KORE carried: 0.42 KORE");
+const empty = card.readPlayer({ wallet: W, lookup: { miners: { [W]: { streak: 0, paid: "0", waiting: "0" } } }, ladder: { wallets: [] } });
+check("empty states", empty.lines.ktaToday === "Counted today: 0 KTA. No counted send yet today." && empty.lines.shareToday === "Your share of today's KORE: None yet today." && empty.lines.carried === "Part of a KORE carried: 0 KORE");
+check("'Shop items owned', empty text", v.lines.upgrades === "Shop items owned: None yet. The shop comes later." && !/Upgrades/.test(v.text));
+check("whole-coin note under paid/waiting", v.lines.whole === card.WHOLE_NOTE);
+check("unknown wallet copy", card.readPlayer({ wallet: "keeta_" + "a".repeat(60), lookup, ladder }).text === card.UNKNOWN);
+check("rankStory uses the best rung after a reset", card.rankStory(3, "Shift Boss Shield").title === "Shift Boss" && card.rankStory(3).title === "Miner" && card.rankStory(0, 84).title === "Barterer");
+check("Barterer caption replaced", card.rankStory(84).caption === "Eighty-four days mined. Badge on, and you get a vote on the show." && !JSON.stringify(card.rankStory(84)).includes("practice call"));
+check("Miner caption replaced", card.rankStory(0).caption === "New on the ladder. One counted send a day keeps the streak warm.");
+check("badge: Mine open", card.mineBadge({ open: true }) === "Mine open");
+const badge = card.mineBadge({ open: false, opensAt: "2026-10-29T00:00:00Z" });
+check("badge: Mine opens [date, time ET], no weekday", badge === "Mine opens October 28, 8:00 PM ET", badge);
+// Ban list, every §6 term. A shop item name is user-visible text that goes through refuse().
+const terms = ["price", "returns", "$5", "floor", "yield", "APR", "dividend", "passive income", "guaranteed", "backed by", "reward", "deflationary", "jackpot", "prize", "TPS", "buy", "rate", "rates", "sealed", "21M", "supply", "proof of burn", "every miner", "earn", "decimal", "@Keeta", "Trey", "Wednesday", "Thursday", "Wed", "Thu", "pick", "picks", "fewer", "bigger"];
+const missed = terms.filter((t) => !throws(() => card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...lookup.miners[W], shopItems: [`a ${t} item`] } } }, ladder })));
+check("BANNED covers the full §6 list", missed.length === 0, missed.join(","));
+const legal = ["can't be returned", "recap", "pickaxe", "Narrator Book"];
+const blocked = legal.filter((t) => throws(() => card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...lookup.miners[W], shopItems: [t] } } }, ladder })));
+check("required words stay legal (returned, recap, pickaxe)", blocked.length === 0, blocked.join(","));
+const all = [0, 14, 28, 56, 84].flatMap((d) => { const r = card.rankStory(d); return [r.caption, r.alt, r.title, r.badge, r.next]; });
+check("every caption and alt passes the ban list", all.every((t) => !throws(() => card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...lookup.miners[W], shopItems: [t] } } }, ladder }))));
+check("refuse() still blocks a full address everywhere else", throws(() => card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...lookup.miners[W], shopItems: [W] } } }, ladder })));
+const sb = card.sendBlock();
+check("send block: full fire address, copy button, own render path", sb.address === ADDR.sink && card.sendBlockHtml().includes(`<code id="fire-address">${ADDR.sink}</code>`) && card.sendBlockHtml().includes(`data-copy="${ADDR.sink}"`));
+check("send block copy matches §3", sb.lead === "Send more than 1 KTA from your own wallet to the fire address:" && sb.tip === "Sends from the same wallet in one mine day add up." && sb.note.startsWith("Sends of 1 KTA or less are not counted and can't be returned."));
+check("send block refuses any other address", throws(() => card.sendBlock(ADDR.intake)));
+let copied = ""; await card.copyFire({ writeText: async (t) => { copied = t; } });
+check("copy button copies the fire address", copied === ADDR.sink);
+check("public text has no full address", !/keeta_[a-z0-9]{20,}/.test(card.publicText({ lookup, ladder, wallet: W })));
+// Integration with the runner's public output.
+const cfg = makeConfig({ pitDay1: "2026-11-02" });
+const pit = createPit({});
+pit.pending = { [W]: 15_342_420_000_000_000n, [ADDR.testB]: 10n ** 13n }; pit.paid = { [W]: 15_000n };
+pit.ladder = { [W]: { streak: 3, best: 1, shields: 1, used_run: 0, used_total: 1, practice_given: true, shift_boss_grants: 1, perks: [], missed_total: 1, frozen: false }, [ADDR.testB]: { streak: 15, best: 0, shields: 0, used_run: 0, used_total: 0, practice_given: false, shift_boss_grants: 0, perks: [], missed_total: 0, frozen: true } };
+const views = publicViews(cfg, pit, { today: "2026-11-03", todaySends: [], testMode: false, updated: "2026-11-03T00:15:00.000Z" });
+const pv = card.readPlayer({ wallet: W, lookup: views.lookup, ladder: views.ladder });
+check("runner output renders: streak, best rank, waiting, carried", pv.lines.ladder === "Streak 3 (1 shield used)" && pv.lines.rank === "Rank: Shift Boss Shield" && pv.lines.waiting === "342 KORE waiting" && pv.lines.carried === "Part of a KORE carried: 0.42 KORE", JSON.stringify(pv.lines));
+check("aabz6zxb is not on the public board", card.readPlayer({ wallet: ADDR.testB, lookup: views.lookup, ladder: views.ladder }).kind === "unknown" && !card.leaderboard(views.lookup).some((r) => r.wallet.endsWith("bbvy")));
+const copy = readFileSync("/workspace/marketing/review-queue/kory-2026-10-26-launch-and-card-copy-v1.md");
+const { createHash } = await import("node:crypto");
+check("copy source is v1 md5 9cb35a96", createHash("md5").update(copy).digest("hex").startsWith("9cb35a96"));
+console.log(failed ? `CARD_CHECK_FAIL ${failed}` : "CARD_CHECK_PASS");
+process.exit(failed ? 1 : 0);
