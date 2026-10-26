@@ -14,7 +14,7 @@ const v = card.readPlayer({ wallet: W, lookup, ladder });
 check("fuel and the duplicate mining streak are gone", !("fuel" in v) && !("miningStreak" in v) && !("fuel" in v.lines) && !("mining" in v.lines) && !/Fuel|Mining streak/.test(v.text));
 check("buyer nights and the barterer line are hidden", !("buyers" in v.lines) && !("barterer" in v.lines) && !/Buyer|Barterers trade/.test(v.text));
 check("one streak line: 'Streak N (1 shield used)'", v.lines.ladder === "Streak 3 (1 shield used)");
-check("rank keeps the best rung from the ladder", v.lines.rank === "Rank: Shift Boss Shield");
+check("rank keeps the best rung from the ladder (M3: shown without \"Shield\")", v.lines.rank === "Rank: Shift Boss");
 check("new ktaToday / shareToday / carried lines", v.lines.ktaToday === "Counted today: 2.5 KTA" && v.lines.shareToday === "Your share of today's KORE: 12.34%" && v.lines.carried === "Part of a KORE carried: 0.42 KORE");
 const empty = card.readPlayer({ wallet: W, lookup: { miners: { [W]: { streak: 0, paid: "0", waiting: "0" } } }, ladder: { wallets: [] } });
 check("empty states", empty.lines.ktaToday === "Counted today: 0 KTA. No counted send yet today." && empty.lines.shareToday === "Your share of today's KORE: None yet today." && empty.lines.carried === "Part of a KORE carried: 0 KORE");
@@ -51,7 +51,7 @@ pit.pending = { [W]: 15_342_420_000_000_000n, [ADDR.testB]: 10n ** 13n }; pit.pa
 pit.ladder = { [W]: { streak: 3, best: 1, shields: 1, used_run: 0, used_total: 1, practice_given: true, shift_boss_grants: 1, perks: [], missed_total: 1, frozen: false }, [ADDR.testB]: { streak: 15, best: 0, shields: 0, used_run: 0, used_total: 0, practice_given: false, shift_boss_grants: 0, perks: [], missed_total: 0, frozen: true } };
 const views = publicViews(cfg, pit, { today: "2026-11-03", todaySends: [], testMode: false, updated: "2026-11-03T00:15:00.000Z" });
 const pv = card.readPlayer({ wallet: W, lookup: views.lookup, ladder: views.ladder });
-check("runner output renders: streak, best rank, waiting, carried", pv.lines.ladder === "Streak 3 (1 shield used)" && pv.lines.rank === "Rank: Shift Boss Shield" && pv.lines.waiting === "342 KORE waiting" && pv.lines.carried === "Part of a KORE carried: 0.42 KORE", JSON.stringify(pv.lines));
+check("runner output renders: streak, best rank, waiting, carried", pv.lines.ladder === "Streak 3 (1 shield used)" && pv.lines.rank === "Rank: Shift Boss" && pv.lines.waiting === "342 KORE waiting" && pv.lines.carried === "Part of a KORE carried: 0.42 KORE", JSON.stringify(pv.lines));
 check("aabz6zxb is not on the public board", card.readPlayer({ wallet: ADDR.testB, lookup: views.lookup, ladder: views.ladder }).kind === "unknown" && !card.leaderboard(views.lookup).some((r) => r.wallet.endsWith("bbvy")));
 // Trey 2026-10-26 11:38 ET: exactly 1 KTA counts. Copy says "1 KTA or more" / "under 1 KTA".
 const SRC = readFileSync(new URL("./card.js", import.meta.url), "utf8");
@@ -61,6 +61,29 @@ check("1 KTA copy is exact", card.UNKNOWN === "No counted sends yet for this wal
 check("BANNED passes the new 1 KTA wording", NEW_COPY.every((t) => !BAN.test(t)), NEW_COPY.filter((t) => BAN.test(t)).join(" | "));
 check("old >1 KTA wording is gone from card.js", !/more than 1 KTA|1 KTA or less|at least 1/i.test(SRC));
 check("ktaToday help shows under the counted line", v.lines.ktaTodayHelp === card.KTA_TODAY_HELP && v.text.includes(card.KTA_TODAY_HELP));
+// ---- Sage M2: new banned terms, one case each, through the real refuse() path and the source regex ----
+const M2 = [["thrown away", "Your KTA is thrown away."], ["can't be added", "Sends can't be added later."], ["can’t be added (curly)", "Sends can’t be added later."],
+  ["store of value", "KORE is a store of value."], ["leaves circulation", "Burnt KTA leaves circulation."], ["burn more, get more", "Burn more, get more."],
+  ["burn more get more", "burn more get more"], ["promise", "We promise a payout."], ["promised", "Payouts are promised."]];
+for (const [name, text] of M2) {
+  let refused = false;
+  try { card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...views.lookup.miners[W], shopItems: [text] } } }, ladder: views.ladder }); } catch { refused = true; }
+  check(`M2 BANNED blocks "${name}"`, BAN.test(text) && refused);
+}
+const LIVE_COPY = [card.UNKNOWN, card.SEND_LEAD, card.SEND_NOTE, card.KTA_TODAY_HELP, card.KEPT_NOTE, card.WARMING, card.MALFORMED, card.NO_LADDER, card.FOOTER, card.WHOLE_NOTE, card.SEND_TIP, card.SHOP_EMPTY,
+  ...[0, 14, 28, 56, 84].flatMap((d) => [true, false].flatMap((h) => { const r = card.rankStory(d, null, { shiftBoss: { held: h } }); return [r.caption, r.alt, r.title, r.badge, r.next]; }))].filter(Boolean);
+check("M2 all card copy still passes the extended BANNED", LIVE_COPY.every((t) => !BAN.test(t)), LIVE_COPY.filter((t) => BAN.test(t)).join(" | "));
+check("M2 \"returned\" in SEND_NOTE stays legal", !BAN.test("can't be returned"));
+// ---- Sage M3: rank after a reset ----
+check("M3 runner: next rung is above the best rung, not above the streak (streak 3, best Shift Boss -> Narrator Book at 56)", views.ladder.wallets.find((r) => r.wallet === card.shortWallet(W)).nextRank === "Narrator Book" && views.ladder.wallets.find((r) => r.wallet === card.shortWallet(W)).nextAt === 56);
+check("M3 card: 'Rank: Shift Boss' (no 'Shield'), 'Kept from your best run.', '53 days to Narrator Book'", pv.lines.rank === "Rank: Shift Boss" && pv.lines.kept === "Kept from your best run." && pv.lines.next === "53 days to Narrator Book" && !/Rank: .*Shield/.test(pv.text), JSON.stringify([pv.lines.rank, pv.lines.kept, pv.lines.next]));
+check("M3 card: shield names stay on the shield line", /Shift Boss Shield/.test(pv.lines.shields));
+const old = card.readPlayer({ wallet: W, lookup: views.lookup, ladder: { wallets: [{ ...views.ladder.wallets.find((r) => r.wallet === card.shortWallet(W)), streak: 0, ladderStreak: 0, nextRank: "Practice Shield", nextAt: 14 }] } });
+check("M3 card: an older lookup that says '14 days to Practice Shield' after a reset is corrected to the rung above best", old.lines.next === "56 days to Narrator Book" && old.lines.kept === card.KEPT_NOTE, old.lines.next);
+const atBest = card.readPlayer({ wallet: W, lookup: views.lookup, ladder: { wallets: [{ ...views.ladder.wallets.find((r) => r.wallet === card.shortWallet(W)), streak: 30, ladderStreak: 30 }] } });
+check("M3 card: no 'Kept' line when the streak is at or above the best rung", atBest.lines.kept === "" && !atBest.text.includes(card.KEPT_NOTE));
+check("M3 rankLabel strips only a trailing 'Shield'", card.rankLabel("Shift Boss Shield") === "Shift Boss" && card.rankLabel("Practice Shield") === "Practice" && card.rankLabel("Narrator Book") === "Narrator Book" && card.rankLabel("Barterer") === "Barterer");
+check("M3 Shift Boss caption mentions the shield only while one is held", card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: true } }).caption === "Twenty-eight days down. The shield covers one missed day." && card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: false, used: true } }).caption === "Twenty-eight days down." && card.rankStory(30).caption === "Twenty-eight days down.");
 const copy = readFileSync("/workspace/marketing/review-queue/kory-2026-10-26-launch-and-card-copy-v1.md");
 const { createHash } = await import("node:crypto");
 check("copy source is v1 md5 9cb35a96", createHash("md5").update(copy).digest("hex").startsWith("9cb35a96"));

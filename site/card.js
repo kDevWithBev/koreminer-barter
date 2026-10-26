@@ -1,6 +1,8 @@
 // Full ban list from the copy v1 self-check (§6), plus the older terms. "returned" (required: "can't be returned") and
 // "recap" stay legal: the list bans "returns" and has no bare "cap".
-const BANNED = /price|returns|\$|floor|yield|\bapr\b|dividend|passive income|guaranteed|backed by|reward|deflationary|jackpot|prize|\btps\b|\bbuy|\brates?\b|sealed|21M|supply|proof of burn|every miner|earn|decimal|@keeta|trey|wednesday|thursday|\bwed\b|\bthu\b|\bpicks?\b|fewer|bigger|more rewards coming|\bethereum\b|\bsolana\b|\bbase\b/i;
+// Sage M2 (2026-10-26): thrown away, can't be added (straight or curly apostrophe), store of value, leaves circulation,
+// burn more get more, promise (also bans "promised"/"promises").
+const BANNED = /thrown away|can['\u2019]t be added|store of value|leaves circulation|burn more,? get more|promise|price|returns|\$|floor|yield|\bapr\b|dividend|passive income|guaranteed|backed by|reward|deflationary|jackpot|prize|\btps\b|\bbuy|\brates?\b|sealed|21M|supply|proof of burn|every miner|earn|decimal|@keeta|trey|wednesday|thursday|\bwed\b|\bthu\b|\bpicks?\b|fewer|bigger|more rewards coming|\bethereum\b|\bsolana\b|\bbase\b/i;
 export const FIRE = "keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -18,6 +20,8 @@ export const SEND_NOTE = "Sends under 1 KTA are not counted and can't be returne
 // Help under the "Counted today" line. Exactly 1 KTA counts (Trey, 2026-10-26 11:38 ET).
 export const KTA_TODAY_HELP = "Each send must be 1 KTA or more.";
 export const SHOP_EMPTY = "None yet. The shop comes later.";
+// Sage M3: shown under the rank when the streak is below the best rung reached (the rank is kept after a reset).
+export const KEPT_NOTE = "Kept from your best run.";
 
 export function isKeetaAddress(value) {
   return typeof value === "string" && /^keeta_[a-z0-9]{40,80}$/.test(value);
@@ -49,9 +53,21 @@ export function withCommas(value) {
 }
 
 const RUNG_DAYS = { "Practice Shield": 14, "Shift Boss Shield": 28, "Shift Boss": 28, "Narrator Book": 56, Narrator: 56, Barterer: 84 };
+const RUNG_ORDER = [[14, "Practice Shield"], [28, "Shift Boss Shield"], [56, "Narrator Book"], [84, "Barterer"]];
+
+// Sage M3: the rank line uses the rank name without "Shield"; shield names stay on the shield line.
+export function rankLabel(name) {
+  return String(name ?? "").replace(/\s*Shield$/, "");
+}
+// The rung above the best one reached ({name, at}), or null at the top. The current streak does not lower it.
+export function nextRungAbove(best) {
+  const bestDays = typeof best === "number" ? best : RUNG_DAYS[best] ?? 0;
+  const row = RUNG_ORDER.find(([at]) => at > bestDays);
+  return row ? { name: row[1], at: row[0] } : null;
+}
 
 // Rank keeps the highest rung reached (Decision 8): best is the ladder rank name (or days); the streak can be lower after a reset.
-export function rankStory(streak, best = null) {
+export function rankStory(streak, best = null, shields = null) {
   const now = Number(streak) || 0;
   const bestDays = typeof best === "number" ? best : RUNG_DAYS[best] ?? 0;
   const days = Math.max(now, bestDays);
@@ -93,7 +109,8 @@ export function rankStory(streak, best = null) {
       badge: "Shift Boss Shield",
       portrait: "/cheetah-miner.jpg",
       alt: "A cheetah miner in a helmet, holding a pickaxe",
-      caption: "Twenty-eight days down. The shield covers one missed day.",
+      // Sage M3: the shield sentence only while a Shift Boss shield is held.
+      caption: shields?.shiftBoss?.held === true ? "Twenty-eight days down. The shield covers one missed day." : "Twenty-eight days down.",
       next: next(56),
     };
   }
@@ -271,8 +288,16 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
   const paid = wholeCoins(miner.paid);
   const waiting = wholeCoins(miner.waiting);
   const ladderStreak = row ? Number(row.ladderStreak ?? row.streak) || 0 : null;
-  const nextRank = row?.nextRank ?? null;
-  const nextAt = row?.nextAt ?? null;
+  // Sage M3: count to the rung above the best rung, also when an older lookup sent the rung above the current streak.
+  const bestDays = row?.rank ? RUNG_DAYS[row.rank] ?? 0 : 0;
+  let nextRank = row?.nextRank ?? null;
+  let nextAt = row?.nextAt ?? null;
+  if (row && nextAt != null && Number(nextAt) <= bestDays) {
+    const up = nextRungAbove(row.rank);
+    nextRank = up ? up.name : null;
+    nextAt = up ? up.at : null;
+  }
+  const kept = !!row && bestDays > 0 && ladderStreak < bestDays;
   const daysToNext = row && nextAt != null ? Math.max(0, Number(nextAt) - ladderStreak) : null;
   let progress = 0;
   if (row && nextAt == null) progress = 1;
@@ -290,6 +315,8 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
     ladderStreak,
     shieldsUsed: used,
     rank: row?.rank ?? null,
+    rankLabel: row?.rank ? rankLabel(row.rank) : null,
+    kept,
     nextRank,
     nextAt,
     daysToNext,
@@ -297,8 +324,9 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
     upgrades: upgradesLine(miner),
     lines: {
       ladder: row ? `Streak ${ladderStreak}${used ? ` (${usedText})` : ""}` : NO_LADDER,
-      rank: row ? `Rank: ${row.rank || "none yet"}` : "Rank: none yet",
-      next: row ? daysLine(daysToNext, nextRank) : "",
+      rank: row ? `Rank: ${row.rank ? rankLabel(row.rank) : "none yet"}` : "Rank: none yet",
+      kept: kept ? KEPT_NOTE : "",
+      next: row ? daysLine(daysToNext, nextRank ? rankLabel(nextRank) : nextRank) : "",
       shields: row ? shieldLine(row.shields) : "Shields: no ladder record yet.",
       ktaToday: ktaTodayLine(miner),
       ktaTodayHelp: KTA_TODAY_HELP,

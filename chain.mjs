@@ -140,3 +140,39 @@ export async function pullSince(client, account, { cursor = "", stopBeforeMs = n
   }
   return { rows: found, complete: false };
 }
+
+// ---- pit payouts (Ops R-B1): KORE sends made BY `from` (the shaft), with their external key. No network calls. ----
+// The external is kept in every form it may come back in (string, or bytes as utf8 and base64) so a key match never
+// depends on how the node returns it.
+function externalForms(value) {
+  if (typeof value === "string") return value ? [value] : [];
+  if (value instanceof Uint8Array) {
+    const b = Buffer.from(value);
+    return [b.toString("utf8"), b.toString("base64")];
+  }
+  return [];
+}
+export function readKeyedSends(row, { from, koreText }) {
+  const staple = row?.voteStaple;
+  if (!staple?.timestamp || !staple?.blocksHash) return [];
+  const timeMs = staple.timestamp().getTime();
+  const out = [];
+  (staple.blocks ?? []).forEach((block, blockIndex) => {
+    if (text(block.account) !== from) return;
+    const hash = blockHash(block) || `${staple.blocksHash.toString()}#${blockIndex}`;
+    (block.operations ?? []).forEach((op, opIndex) => {
+      if (op.type !== 0 || text(op.token) !== koreText) return;
+      let amount = 0n;
+      try { amount = BigInt(op.amount); } catch { amount = 0n; }
+      out.push({ externals: [...externalForms(op.external), ...externalForms(block.external)], to: text(op.to), amount, block: hash, op: opIndex, timeMs });
+    });
+  });
+  return out;
+}
+// Every KORE send the shaft made back to sinceMs. complete is false when the walk could not reach sinceMs.
+export async function findKeyedSends(client, account, { sinceMs, koreText, pageLimit = 1_000 }) {
+  const got = await pullSince(client, account, { stopBeforeMs: sinceMs, pageLimit });
+  const sends = [];
+  for (const row of got.rows) sends.push(...readKeyedSends(row, { from: account, koreText }));
+  return { complete: got.complete, sends };
+}

@@ -195,11 +195,21 @@ export function allocate(cfg, pit, day, sends, { testMode = false, ladderOn = tr
     return { halt: "skipped_close", day, missing };
   }
   if (pit.alloc[day]) return { A: pit.alloc[day], resumed: true, isPit };
+  // M1 (Sage, Oct 26): the whole allocation is built on copies and committed at the end in one go, so a throw anywhere
+  // in here leaves pit exactly as it was (no half pot, no seen-without-alloc, no lost streak credit). The ladder gap is
+  // checked before any work.
+  if (ladderOn && isPit) {
+    const last = pit.lmeta.last;
+    if (!(last === null || last === undefined || nextDay(last) === day)) throw new Error(`ladder gap ${last} -> ${day}: a skipped close must halt and backfill`);
+  }
+  const seen = new Set(pit.seen);
+  const pending = { ...pit.pending };
+  const lots = Object.fromEntries(Object.entries(pit.lots).map(([w, l]) => [w, l.map((x) => [...x])]));
   const per = {}; const miners = {}; const ignored = []; let ignRaw = 0n; const burns = [];
   const sorted = [...sends].sort((x, y) => cmpStr(x.time, y.time) || cmpStr(String(sendKey(x)[0]), String(sendKey(y)[0])) || cmpStr(String(sendKey(x)[1]), String(sendKey(y)[1])));
   for (const s of sorted) {
     if (s.time.slice(0, 10) !== day) throw new Error(`send ${s.tx} is not on ${day}`);
-    const r = classify(cfg, s, pit.seen, testMode);
+    const r = classify(cfg, s, seen, testMode);
     const row = per[s.from] ?? (per[s.from] = { counted: 0, ign: {}, raw: 0n });
     if (r === "counted") {
       row.counted += 1; row.raw += s.amount; miners[s.from] = (miners[s.from] ?? 0n) + s.amount;
@@ -223,16 +233,23 @@ export function allocate(cfg, pit, day, sends, { testMode = false, ladderOn = tr
   const floorSum = rows.length ? rows.reduce((a, r) => a + (pot * r.amount) / total, 0n) : 0n;
   const shareOf = {};
   for (const r of rows) {
-    const w = r.from; const old = g(pit.pending, w) / SUB;
-    pit.pending[w] = g(pit.pending, w) + r.share; shareOf[w] = r.share;
-    const nw = pit.pending[w] / SUB;
-    if (nw > old) (pit.lots[w] ?? (pit.lots[w] = [])).push([day, nw - old]);
+    const w = r.from; const old = g(pending, w) / SUB;
+    pending[w] = g(pending, w) + r.share; shareOf[w] = r.share;
+    const nw = pending[w] / SUB;
+    if (nw > old) (lots[w] ?? (lots[w] = [])).push([day, nw - old]);
   }
+  let ladder = pit.ladder; let lmeta = pit.lmeta; const lev = [];
+  if (ladderOn && isPit) {
+    ladder = structuredClone(pit.ladder); lmeta = { ...pit.lmeta };
+    ladderStep(ladder, lmeta, day, new Set(Object.keys(miners)), lev);
+  }
+  const A = { per, miners, ignored, ign_raw: ignRaw, budget, pot, rows, allocated, kept, total, floor_sum: floorSum, share_of: shareOf, burns };
+  // ---- commit: nothing above this line touched pit ----
+  pit.seen = seen; pit.pending = pending; pit.lots = lots;
   pit.budget_total += pot; pit.alloc_total += allocated; pit.kept_total += kept;
   if (!isPit && day >= "2026-10-26") pit.cutover_unissued += budgetOf(day);
   pit.burns.push(...burns);
-  if (ladderOn && isPit) ladderStep(pit.ladder, pit.lmeta, day, new Set(Object.keys(miners)), pit.lev);
-  const A = { per, miners, ignored, ign_raw: ignRaw, budget, pot, rows, allocated, kept, total, floor_sum: floorSum, share_of: shareOf, burns };
+  pit.ladder = ladder; pit.lmeta = lmeta; pit.lev.push(...lev);
   pit.alloc[day] = A;
   if (crash && crash[0] === "before_alloc_write") throw new Crash("before the allocation state write");
   return { A, resumed: false, isPit };
@@ -372,7 +389,7 @@ export function pitToJson(pit) {
 }
 export function pitFromJson(text) {
   return JSON.parse(text, (k, v) => {
-    if (typeof v === "string" && /^-?\d+n$/.test(v)) return BigInt(v.slice(0, -1));
+    if (typeof v === "string" && /^(0|-?[1-9]\d*)n$/.test(v)) return BigInt(v.slice(0, -1));
     if (v && typeof v === "object" && Array.isArray(v.$set)) return new Set(v.$set);
     return v;
   });
