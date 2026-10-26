@@ -38,6 +38,9 @@ export class FeeStop extends Error {}
 export const PACE = { perHour: 60, hourFee: 3n * ONE_KTA, wallDayFee: DAY_CAP, gapMs: minPublishGapMs(60) };
 const HOUR_MS = 3_600_000;
 export const STUCK_MS = 30 * 60 * 1000; // a pending block with no readable date this long: alert + PAYHOLD
+// Ops B-1: settle searches the shaft history from this long before the intent time, so a box clock that runs fast (the
+// staple is stamped before it.at) still finds the key.
+export const SETTLE_LOOKBACK_MS = 15 * 60 * 1000;
 const KEEP_ALLOC_DAYS = 14; // alloc detail kept for the last 14 closed days (the day rows stay forever)
 const KEEP_ALERTS = 5_000; // alerts and flags kept in state; every one is also in pit-alerts.log
 
@@ -245,6 +248,9 @@ export async function runPit({
       // Any pit-shaped KORE send from the shaft since pit day 1 means a pit already paid from this vault.
       const legacyUntil = init.legacyUntil === undefined ? null : Date.parse(init.legacyUntil);
       if (init.legacyUntil !== undefined && !Number.isFinite(legacyUntil)) refuse("pit-init legacyUntil is not a time");
+      // Ops N-3: pit and legacy keys share the kore-<wallet>-<n> shape. The first pit payout cannot exist before pit day 1
+      // has ended, so a legacyUntil at or after that could hide pit sends: refuse it.
+      if (legacyUntil !== null && legacyUntil >= cfg.startMs + DAY_MS) refuse(`pit-init legacyUntil ${init.legacyUntil} is not before the end of pit day 1; it could hide pit sends`);
       const h = await findKeyedSends(client, ADDR.intake, { sinceMs: cfg.startMs, koreText });
       if (!h.complete) refuse("shaft history since pit day 1 is incomplete; refusing to seed");
       const hits = h.sends.filter((s) => s.timeMs >= cfg.startMs && !(legacyUntil !== null && s.timeMs <= legacyUntil) && s.externals.some((e) => e.startsWith("kore-")));
@@ -262,14 +268,14 @@ export async function runPit({
   const wantLast = openAlloc.at(-1) ?? pit.last_pit_closed ?? cfg.ladderLast;
   if (openAlloc.length > 1 || pit.lmeta?.last !== wantLast) refuse(`ladder last day ${pit.lmeta?.last} does not match the closes (${wantLast})`);
   pit.pub_log ??= [];
+  pit.stuck_since ??= null; // Ops N-2: first time a dateless pending block was seen, kept in the state across restarts
 
   let store = readStore();
   let keys = new Set(store.keys);
   let late = new Set(store.late ?? []);
   let noted = { alerts: pit.alerts.length, flags: pit.flags.length };
-  let pendingSeen = null; // first time a dateless pending block was seen (memory only)
 
-  const DEDUPE = new Set(["EXCLUDED_AT_PAYOUT", "FEE_WALL_DAY_CAP", "PAYOUT_WAIT_HISTORY", "PENDING_EXPIRED"]);
+  const DEDUPE = new Set(["EXCLUDED_AT_PAYOUT", "FEE_WALL_DAY_CAP", "PAYOUT_WAIT_HISTORY", "PAYOUT_UNPROVEN", "PENDING_EXPIRED", "PENDING_STUCK"]);
   function prune() {
     // Repeats of the same alert (same day, kind, detail) are dropped (Ops nit 6: queue resumes re-check exclusions).
     const seenA = new Set(pit.alerts.slice(0, noted.alerts).map((a) => a.join("|")));
@@ -300,7 +306,7 @@ export async function runPit({
   }
   // M1: after any throw the in-memory pit may be half-way; go back to what is on disk. Never save it.
   function reload() {
-    pit = readPit(); pit.pub_log ??= [];
+    pit = readPit(); pit.pub_log ??= []; pit.stuck_since ??= null;
     store = readStore(); keys = new Set(store.keys); late = new Set(store.late ?? []);
     noted = { alerts: pit.alerts.length, flags: pit.flags.length };
   }
@@ -346,15 +352,15 @@ export async function runPit({
   // "none", "live" (wait), "expired" (cannot land any more: same 6 min rule as run.mjs finishSignedBlock) or "stuck".
   async function pendingState() {
     const p = await client.pendingBlock?.();
-    if (!p) { pendingSeen = null; return "none"; }
+    if (!p) { if (pit.stuck_since !== null) { pit.stuck_since = null; save(); } return "none"; }
     const at = blockTime(p);
     if (Number.isFinite(at)) {
-      pendingSeen = null;
+      if (pit.stuck_since !== null) { pit.stuck_since = null; save(); }
       if (now() - at > EXPIRE_MS) { pit.alerts.push([utcDay(now()), "PENDING_EXPIRED", `pending block from ${new Date(at).toISOString()} has expired`]); return "expired"; }
       return "live";
     }
-    pendingSeen ??= now();
-    if (now() - pendingSeen > STUCK_MS) { pit.alerts.push([utcDay(now()), "PENDING_STUCK", "pending block with no date for 30 min"]); return "stuck"; }
+    if (pit.stuck_since === null) { pit.stuck_since = now(); save(); }
+    if (now() - pit.stuck_since > STUCK_MS) { pit.alerts.push([utcDay(now()), "PENDING_STUCK", "pending block with no date for 30 min"]); return "stuck"; }
     return "live";
   }
   const pubEntry = (key) => pit.pub_log.find((e) => e.key === key);
@@ -373,7 +379,7 @@ export async function runPit({
     if (open.length > 1) { hold("More than one open payout intent."); return "hold"; }
     const [key, it] = open[0];
     if (testMode) { voidOpen(key, it, "test-mode intent left open by a stop"); save(); return "void"; }
-    const h = await findKeyedSends(client, ADDR.intake, { sinceMs: it.at - 60_000, koreText });
+    const h = await findKeyedSends(client, ADDR.intake, { sinceMs: it.at - SETTLE_LOOKBACK_MS, koreText });
     const hits = h.sends.filter((s) => s.externals.includes(key));
     if (hits.length) {
       if (hits.length !== 1 || hits[0].to !== it.w || hits[0].amount !== it.amt) {
@@ -390,6 +396,13 @@ export async function runPit({
     if (!h.complete) {
       pit.alerts.push([it.day, "PAYOUT_WAIT_HISTORY", `${key}: shaft history incomplete; not voided`]);
       save(); hold(`Shaft history incomplete for ${key}.`); return "hold";
+    }
+    // Ops B-1 (3) and N-1: a shaft send to this wallet for exactly this amount whose external is not a readable kore- key
+    // (base64, hex, missing) may be this payout. Hold, never void.
+    const unkeyed = h.sends.filter((s) => s.to === it.w && s.amount === it.amt && !s.externals.some((e) => e.startsWith("kore-")));
+    if (unkeyed.length) {
+      pit.alerts.push([it.day, "PAYOUT_UNPROVEN", `${key}: ${unkeyed.length} shaft send(s) to ${it.w} for ${it.amt} KORE with no readable key; not voided`]);
+      save(); hold(`A shaft send matching ${key} has no readable key.`); return "hold";
     }
     const verdict = judgeIntent(await client.balance(koreAccount), { floor: it.floor, amount: it.amt });
     if (verdict === "missed") {

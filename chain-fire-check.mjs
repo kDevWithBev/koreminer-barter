@@ -1,5 +1,5 @@
 // readFireStaple / pullSince (chain.mjs). Offline.
-import { pullSince, readFireStaple } from "./chain.mjs";
+import { pullSince, readFireStaple, readKeyedSends } from "./chain.mjs";
 
 const FIRE = "keeta_aabe7jhqj3bzv3jg3l6el5myl24yvjawy73btyurwdv5kyhpsmv7a2yec4ep4sq";
 const INTAKE = "keeta_aabxtne7hbivzeknf3c6dw7rb7uiln7pbntwubrwccb7uz62ihjlmlaordxh6fa";
@@ -29,15 +29,35 @@ const nohash = readFireStaple(row("S2", "2026-11-02T02:00:00.000Z", [{ account: 
 check("a block without a hash falls back to staple#index", nohash.sends[0].block === "S2#0");
 
 const rows = Array.from({ length: 250 }, (_, i) => row(`H${i}`, new Date(Date.parse("2026-11-03T00:00:00Z") - i * 60_000).toISOString(), []));
-const client = { getHistory: async (acc, { startBlocksHash }) => {
+const client = { client: { getHistory: async (acc, { startBlocksHash }) => {
   if (acc !== FIRE) throw new Error("wrong account");
   const i = startBlocksHash ? rows.findIndex((x) => x.voteStaple.blocksHash.toString() === startBlocksHash) + 1 : 0;
   return rows.slice(i, i + 100);
-} };
+} } };
 const a = await pullSince(client, FIRE, { cursor: "H120" });
 check("walks pages back to the cursor, newest first", a.complete && a.rows.length === 120 && a.rows[0].voteStaple.blocksHash.toString() === "H0");
 const b = await pullSince(client, FIRE, { stopBeforeMs: Date.parse("2026-11-02T23:00:00Z") });
 check("no cursor: stops at the start time", b.complete && b.rows.length === 61);
 const c = await pullSince(client, FIRE, { cursor: "missing" });
 check("a cursor that is never found is incomplete", c.complete === false);
+// Ops B-1: complete only after a row older than the start (or the cursor) was seen; an empty or short page is not proof.
+const fake = (pages) => ({ client: { getHistory: async (acc, { startBlocksHash }) => { const i = startBlocksHash ? rows.findIndex((x) => x.voteStaple.blocksHash.toString() === startBlocksHash) + 1 : 0; return pages(i); } } });
+const e1 = await pullSince(fake(() => []), FIRE, { stopBeforeMs: Date.parse("2026-11-02T23:00:00Z") });
+check("B-1 empty first page, no cursor: incomplete", e1.complete === false);
+const e2 = await pullSince(fake(() => []), FIRE, { cursor: "H5" });
+check("B-1 empty first page with a cursor: incomplete", e2.complete === false);
+const e3 = await pullSince(fake((i) => rows.slice(i, Math.min(i + 100, 30))), FIRE, { stopBeforeMs: Date.parse("2026-11-02T23:00:00Z") });
+check("B-1 short page that never reaches the start time: incomplete", e3.complete === false && e3.rows.length === 30);
+const e4 = await pullSince(fake((i) => rows.slice(i, i + 100).slice(0, 70)), FIRE, { stopBeforeMs: Date.parse("2026-11-02T23:00:00Z") });
+check("B-1 short page that does reach the start time: complete", e4.complete === true && e4.rows.length === 61);
+const e5 = await pullSince(fake((i) => rows.slice(i, i + 100)), FIRE, { stopBeforeMs: Date.parse("2020-01-01T00:00:00Z") });
+check("B-1 the whole history ends before the start time is reached: incomplete", e5.complete === false && e5.rows.length === 250);
+// Ops O14: only KORE sends made BY the shaft are its keyed sends.
+const SH = "keeta_shaft_stand_in";
+const kr = row("K1", "2026-11-02T01:00:00.000Z", [
+  { account: acct(SH), hash: "KB1", operations: [{ type: 0, to: acct("keeta_w1"), token: acct(KORE), amount: 5n, external: "kore-keeta_w1-5" }, { type: 0, to: acct("keeta_w1"), token: acct(BASE), amount: 5n, external: "kore-keeta_w1-5" }] },
+  { account: acct("keeta_other"), hash: "KB2", operations: [{ type: 0, to: acct("keeta_w1"), token: acct(KORE), amount: 5n, external: "kore-keeta_w1-5" }] },
+]);
+const ks = readKeyedSends(kr, { from: SH, koreText: KORE });
+check("O14 a keyed KORE send from another account, or a non-KORE op from the shaft, is not a shaft payout", ks.length === 1 && ks[0].block === "KB1" && ks[0].op === 0 && ks[0].externals[0] === "kore-keeta_w1-5");
 console.log("chain fire ok");

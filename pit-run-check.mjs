@@ -16,27 +16,34 @@ let failed = 0;
 function check(name, ok, extra = "") { console.log(`${ok ? "PASS" : "FAIL"} ${name}${extra ? ` - ${extra}` : ""}`); if (!ok) failed += 1; }
 
 function mockClient({ kta = 10n * ONE_KTA, kore = 20_000_000n, fee = FEE_RAW, staples = [], crash = null } = {}) {
-  const c = { kta, kore, published: [], staples, crash, fee, pending: null, now: () => { throw new Error("mock clock not set"); }, feeBad: false, intakeStuck: false };
+  const c = { kta, kore, published: [], staples, crash, fee, pending: null, now: () => { throw new Error("mock clock not set"); }, feeBad: false, intakeStuck: false, genesis: true, voteFee: null };
+  // Ops B-1: a real shaft and fire address have history from long before any pitDay1; the mock ends each history with one
+  // old row so a full walk can prove it reached the start. genesis = false models a node that returns a truncated history.
+  const old = (acct) => ({ voteStaple: { blocksHash: { toString: () => `G-${acct.slice(6, 12)}` }, timestamp: () => new Date("2025-01-01T00:00:00Z"), blocks: [] } });
   const tok = (t) => (typeof t === "string" ? t : t?.publicKeyString?.toString?.() ?? "");
   const page = (rows, startBlocksHash) => {
     if (!startBlocksHash) return rows.slice(0, 100);
     const i = rows.findIndex((r) => r.voteStaple.blocksHash.toString() === startBlocksHash);
     return rows.slice(i + 1, i + 101);
   };
-  c.getHistory = async (account, { startBlocksHash } = {}) => {
+  // Shaped like the real UserClient (keetanet-client 0.18.7): no top-level getHistory, other accounts via c.client.getHistory.
+  c._history = async (account, { startBlocksHash } = {}) => {
     if (account === ADDR.intake) { // the shaft's own KORE payouts, with their external keys (Ops R-B1)
       if (c.intakeStuck) return Array.from({ length: 100 }, (_, i) => ({ voteStaple: { blocksHash: { toString: () => "STUCK" }, timestamp: () => new Date(c.now()), blocks: [] } }));
       const rows = [...c.published].map((p, i) => ({ ...p, i })).sort((a, b) => b.t - a.t || b.i - a.i).map((p) => ({
         voteStaple: { blocksHash: { toString: () => `P${p.i}` }, timestamp: () => new Date(p.t), blocks: [{ account: ADDR.intake, hash: `PB${p.i}`, operations: [{ type: 0, to: p.to, token: ADDR.kore, amount: p.amount, external: p.key }] }] },
       }));
+      if (c.genesis) rows.push(old(account));
       return page(rows, startBlocksHash);
     }
     if (account !== ADDR.sink) throw new Error("history of the wrong account");
     const rows = [...c.staples].sort((a, b) => b.t - a.t).map((s) => ({
       voteStaple: { blocksHash: { toString: () => s.hash }, timestamp: () => new Date(s.t), blocks: s.blocks },
     }));
+    if (c.genesis) rows.push(old(account));
     return page(rows, startBlocksHash);
   };
+  c.client = { getHistory: (account, opts) => c._history(account, opts) };
   c.balance = async (t) => { if (c.failBalance) { c.failBalance -= 1; throw new Error("balance read failed"); } return tok(t) === BASE ? c.kta : c.kore; };
   c.pendingBlock = async () => c.pending;
   c.initBuilder = () => {
@@ -52,7 +59,7 @@ function mockClient({ kta = 10n * ONE_KTA, kore = 20_000_000n, fee = FEE_RAW, st
   c.publishBuilder = async (builder, { generateFeeBlock }) => {
     if (c.crash === "before") { c.crash = null; throw new Error("socket closed before publish"); }
     let feeBlock;
-    try { feeBlock = await generateFeeBlock({ votes: [{ fee: { amount: c.fee, token: BASE } }] }); } finally { c.feeBad = false; }
+    try { feeBlock = await generateFeeBlock({ votes: [{ fee: { amount: c.voteFee ?? c.fee, token: BASE } }] }); } finally { c.feeBad = false; }
     const op = builder.ops[0];
     c.kore -= op.amount; c.kta -= feeBlock.operations[0].amount;
     c.published.push({ to: op.to, amount: op.amount, key: op.external, t: c.now(), fee: feeBlock.operations[0].amount });
@@ -633,6 +640,167 @@ const kta = (raw) => (Number(raw) / 1e18).toFixed(5);
   const v = publicViews(cfg, pit, { today: DAY1, todaySends: [], testMode: false, updated: "x" });
   const row = v.ladder.wallets.find((r) => r.ladderStreak === 3 && r.rank === "Shift Boss Shield");
   check("12g M3 runner: best Shift Boss, streak 3 -> next rung Narrator Book at 56 (not Practice Shield at 14)", !!row && row.nextRank === "Narrator Book" && row.nextAt === 56, JSON.stringify(row && { rank: row.rank, nextRank: row.nextRank, nextAt: row.nextAt }));
+  rmSync(dir, { recursive: true });
+}
+
+// ---- 13. Ops re-check B-1 (LIVE blocker): history completeness, clock skew, unkeyed sends; N-2, N-3 and the 6 guard gaps ----
+// r1: Ops' 2-send repro. The send lands, the runner crashes before settle, then exactly it.amt flows back into the shaft, so
+// the balance alone says "missed". `twist` then changes what the node returns for the shaft history.
+async function r1(twist) {
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1(), crash: "after" });
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  const first = c.published[0];
+  const mid = stateOf(dir); const key = Object.entries(mid.intents).find(([, v]) => v.status === "intent")[0];
+  c.kore += first.amount;
+  const orig = c._history;
+  const intake = (f) => { c._history = async (a, o) => (a === ADDR.intake ? f(await orig(a, o), o) : orig(a, o)); };
+  const ext = (f) => intake((rows) => { for (const r of rows) for (const b of r.voteStaple.blocks) for (const op of b.operations) op.external = f(op.external); return rows; });
+  if (twist === "empty") intake(() => []);
+  // short: a lagging node returns one newer unrelated row and stops; neither the payout nor anything older is in it.
+  if (twist === "short") { c.published.push({ to: W(9), amount: 1n, key: `kore-${W(9)}-1`, t: t + 1000, fee: 0n }); intake((rows) => rows.filter((r) => r.voteStaple.blocks.some((b) => b.operations.some((op) => op.to === W(9))))); }
+  if (twist === "skew2") first.t = t - 2 * 60_000;
+  if (twist === "skew14") first.t = t - 14 * 60_000;
+  if (twist === "b64") ext((e) => Buffer.from(String(e)).toString("base64"));
+  if (twist === "hex") ext((e) => Buffer.from(String(e)).toString("hex"));
+  if (twist === "none") ext(() => undefined);
+  await rp({ dir, client: c, ...base, now: () => t + 8 * 60_000, sleep: async () => {}, steps: 1 });
+  await rp({ dir, client: c, ...base, now: () => t + 10 * 60_000, sleep: async () => {}, steps: 1 });
+  const p = stateOf(dir);
+  const r = { n: c.published.filter((x) => x.to === first.to).length, status: p.intents[key].status, hold: existsSync(`${dir}/PAYHOLD`), alerts: p.alerts.map((a) => a[1]) };
+  rmSync(dir, { recursive: true });
+  return r;
+}
+{
+  const e = await r1("empty");
+  check("13a B-1 Ops repro, shaft history page empty: no second send, not voided, PAYHOLD + PAYOUT_WAIT_HISTORY", e.n === 1 && e.status === "intent" && e.hold && e.alerts.includes("PAYOUT_WAIT_HISTORY") && !e.alerts.includes("PAYOUT_VOID"), JSON.stringify(e));
+  const s = await r1("short");
+  check("13b B-1 shaft history short page that never reaches the intent time: no second send, PAYHOLD + PAYOUT_WAIT_HISTORY", s.n === 1 && s.status === "intent" && s.hold && s.alerts.includes("PAYOUT_WAIT_HISTORY"), JSON.stringify(s));
+  const k2 = await r1("skew2");
+  check("13c B-1 box clock 2 min fast (staple stamped 2 min before it.at): key found, marked paid, no second send", k2.n === 1 && k2.status === "sent" && !k2.hold, JSON.stringify(k2));
+  const k14 = await r1("skew14");
+  check("13d B-1 staple 14 min before it.at: still inside the 15 min window, paid once", k14.n === 1 && k14.status === "sent" && !k14.hold, JSON.stringify(k14));
+  for (const tw of ["b64", "hex", "none"]) {
+    const r = await r1(tw);
+    check(`13e B-1/N-1 the send's external comes back as ${tw}: unkeyed send to the wallet for the amount -> PAYOUT_UNPROVEN, PAYHOLD, no second send`, r.n === 1 && r.status === "intent" && r.hold && r.alerts.includes("PAYOUT_UNPROVEN") && !r.alerts.includes("PAYOUT_VOID"), JSON.stringify(r));
+  }
+}
+{
+  // 13f: an unkeyed shaft send to the same wallet for a DIFFERENT amount does not block the void (crash before publish).
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1(), crash: "before" });
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  const [it] = open(stateOf(dir));
+  c.published.push({ to: it.w, amount: it.amt + 1n, key: undefined, t: t + 1000, fee: 0n });
+  c.published.push({ to: W(9), amount: it.amt, key: undefined, t: t + 2000, fee: 0n });
+  await rp({ dir, client: c, ...base, now: () => t + 8 * 60_000, sleep: async () => {}, steps: 1 });
+  const p = stateOf(dir);
+  check("13f B-1 unkeyed sends for another amount or another wallet do not hold: voided once, each wallet paid once", p.alerts.filter((x) => x[1] === "PAYOUT_VOID").length === 1 && !existsSync(`${dir}/PAYHOLD`) && c.published.filter((x) => x.key).length === 3 && !!p.closed[DAY1]);
+  rmSync(dir, { recursive: true });
+}
+{
+  // 13g N-2: a dateless pending block across a restart on every pass still reaches PENDING_STUCK + PAYHOLD after 30 min.
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1(), crash: "before" });
+  let t = Date.parse("2026-11-03T00:11:00Z");
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  c.pending = { operations: [] };
+  for (let i = 0; i < 20; i += 1) { t += 2 * 60_000; await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 }); }
+  const p = stateOf(dir);
+  check("13g N-2 stuck timer is kept in pit-state: restarts every 2 min, PENDING_STUCK + PAYHOLD after 30 min, nothing voided or sent", p.alerts.some((x) => x[1] === "PENDING_STUCK") && existsSync(`${dir}/PAYHOLD`) && open(p).length === 1 && c.published.length === 0 && typeof p.stuck_since === "number");
+  rmSync(dir, { recursive: true });
+}
+{
+  // 13g2 N-2: the stuck timer is on disk as soon as it starts, not only at the end of the pass (a kill right after cannot lose it).
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1(), crash: "before" });
+  let t = Date.parse("2026-11-03T00:11:00Z");
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  c.pending = { operations: [] };
+  const inner = c.pendingBlock.bind(c);
+  const disk = [];
+  // the pass reads the pending block more than once; by the second read the timer the first read started must already be in the file
+  c.pendingBlock = async () => { disk.push(stateOf(dir).stuck_since); return inner(); };
+  t += 2 * 60_000;
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  check("13g2 N-2 stuck timer is saved to pit-state the moment it starts", disk.length >= 2 && disk[0] === null && disk[1] === t);
+  rmSync(dir, { recursive: true });
+}
+{
+  // 13h/13i N-3: legacyUntil may cover the legacy close payouts on pit day 1, but never reach the first pit close.
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  const d1 = setup(); init(d1, DAY1, "live", { legacyUntil: "2026-11-03T00:00:00Z" });
+  const c1 = mockClient({ staples: day1() });
+  let threw = ""; try { await rp({ dir: d1, client: c1, ...base, now: () => t, sleep: async () => {}, steps: 1 }); } catch (e) { threw = e.message; }
+  check("13h N-3 legacyUntil at the end of pit day 1 (could hide pit sends): refused, nothing seeded or sent", /legacyUntil .* could hide pit sends/.test(threw) && !existsSync(`${d1}/pit-state.json`) && c1.published.length === 0, threw);
+  rmSync(d1, { recursive: true });
+  const d2 = setup(); init(d2, DAY1, "live", { legacyUntil: `${DAY1}T02:00:00Z` }); writeFileSync(`${d2}/SEND`, "on\n");
+  const c2 = mockClient({ staples: day1() });
+  c2.published.push({ to: W(9), amount: 5n, key: `kore-${W(9)}-5`, t: Date.parse(`${DAY1}T01:00:00Z`), fee: 0n });
+  await rp({ dir: d2, client: c2, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  check("13i N-3 legacyUntil 02:00Z on pit day 1 covers a legacy kore- send at 01:00Z: seeds and pays", existsSync(`${d2}/pit-state.json`) && c2.published.length === 4, `state ${existsSync(`${d2}/pit-state.json`)} published ${c2.published.length} ${existsSync(`${d2}/HALT`) ? readFileSync(`${d2}/HALT`, "utf8") : ""}`);
+  rmSync(d2, { recursive: true });
+}
+{
+  // 13j Ops O22: the wall-day and hour fee rooms are in the fee-block cap, not only in the quote check.
+  for (const [name, pace] of [["wall-day", { wallDayFee: FEE_RAW }], ["hour", { hourFee: FEE_RAW }]]) {
+    const dir = setup();
+    writeFileSync(`${dir}/SEND`, "on\n");
+    const c = mockClient({ staples: day1() });
+    c.voteFee = FEE_RAW + 1n; // the quote fits the room exactly; the vote fee at publish time is 1 raw over
+    await rp({ dir, client: c, ...base, pace: { gapMs: 0, ...pace }, now: () => Date.parse("2026-11-03T00:11:00Z"), sleep: async () => {}, steps: 1 });
+    check(`13j O22 ${name} fee room in the publish cap: a vote fee 1 raw over the room is refused, nothing published`, c.published.length === 0);
+    rmSync(dir, { recursive: true });
+  }
+}
+{
+  // 13k/13l Ops O23, O25: one leftover alone (pit-sends.json, or pit-init.used) with a missing state and a new pit-init refuses.
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  for (const keep of ["pit-sends.json", "pit-init.used"]) {
+    const dir = setup({ test: true });
+    const c = mockClient({ staples: day1() });
+    await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+    for (const n of readdirSync(`${dir}/pit-test`)) if (n !== keep) rmSync(`${dir}/pit-test/${n}`, { force: true });
+    init(dir, DAY1, "test");
+    let threw = ""; try { await rp({ dir, client: c, ...base, now: () => t + 60_000, sleep: async () => {}, steps: 1 }); } catch (e) { threw = e.message; }
+    check(`13k O23/O25 only ${keep} left + a new pit-init: refused, no fresh pit`, threw.includes(`but ${keep} exist`) && !existsSync(`${dir}/pit-test/pit-state.json`), threw);
+    rmSync(dir, { recursive: true });
+  }
+}
+{
+  // 13m Ops O33: the state is bound to the config: no run block, or a run block for another pitDay1, refuses.
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  for (const [name, edit] of [["no run block", (p) => { delete p.run; }], ["another pitDay1", (p) => { p.run.pitDay1 = "2026-11-01"; }]]) {
+    const dir = setup({ test: true });
+    const c = mockClient({ staples: day1() });
+    await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+    const p = stateOf(dir, "/pit-test"); edit(p); writeFileSync(`${dir}/pit-test/pit-state.json`, pitToJson(p));
+    const before = readFileSync(`${dir}/pit-test/pit-state.json`, "utf8");
+    let threw = ""; try { await rp({ dir, client: c, ...base, now: () => t + 60_000, sleep: async () => {}, steps: 1 }); } catch (e) { threw = e.message; }
+    check(`13m O33 state with ${name}: refused (was made for), HALT, state untouched`, /was made for/.test(threw) && existsSync(`${dir}/pit-test/HALT`) && readFileSync(`${dir}/pit-test/pit-state.json`, "utf8") === before, threw);
+    rmSync(dir, { recursive: true });
+  }
+}
+{
+  // 13n Ops O35: two open intents (should never happen) hold; nothing is settled, voided or sent.
+  const dir = setup();
+  writeFileSync(`${dir}/SEND`, "on\n");
+  const c = mockClient({ staples: day1(), crash: "before" });
+  const t = Date.parse("2026-11-03T00:11:00Z");
+  await rp({ dir, client: c, ...base, now: () => t, sleep: async () => {}, steps: 1 });
+  const p = stateOf(dir);
+  const [k, it] = Object.entries(p.intents).find(([, v]) => v.status === "intent");
+  p.intents[`${k}-copy`] = structuredClone(it);
+  writeFileSync(`${dir}/pit-state.json`, pitToJson(p));
+  await rp({ dir, client: c, ...base, now: () => t + 8 * 60_000, sleep: async () => {}, steps: 1 });
+  const q = stateOf(dir);
+  check("13n O35 more than one open intent: PAYHOLD, both left open, nothing voided or sent", existsSync(`${dir}/PAYHOLD`) && open(q).length === 2 && c.published.length === 0 && !q.alerts.some((x) => x[1] === "PAYOUT_VOID"));
   rmSync(dir, { recursive: true });
 }
 

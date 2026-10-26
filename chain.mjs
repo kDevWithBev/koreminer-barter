@@ -119,13 +119,18 @@ export function readFireStaple(row, { fire = sink, baseText, koreText }) {
 }
 
 // Newest-first history of `account` back to `cursor` (exclusive), or back past stopBeforeMs when there is no cursor yet.
-// complete is false when the walk ended without reaching either; the caller must not advance its cursor then.
+// complete is true ONLY when the walk saw the cursor row, or (no cursor) a row older than stopBeforeMs (Ops B-1). An empty
+// page, a short page or the end of the account's history is never proof: a truncating or lagging node looks exactly like
+// that. The shaft and the fire address (the old sink) both have history from long before any pitDay1.
 export async function pullSince(client, account, { cursor = "", stopBeforeMs = null, pageLimit = 1_000 } = {}) {
   const found = [];
   let start;
   for (let page = 0; page < pageLimit; page += 1) {
-    const rows = await client.getHistory(account, { depth: 100, startBlocksHash: start });
-    if (!rows?.length) return { rows: found, complete: true };
+    // client is the runner's KeetaNet UserClient (run.mjs); history of ANOTHER account lives on its network Client,
+    // UserClient.client.getHistory(account, { depth, startBlocksHash }). UserClient has no getHistory (box 3, Oct 26).
+    // startBlocksHash is exclusive (checked on the real node, keetanet-client 0.18.7).
+    const rows = await client.client.getHistory(account, { depth: 100, startBlocksHash: start });
+    if (!rows?.length) return { rows: found, complete: false };
     for (const row of rows) {
       const hash = row.voteStaple.blocksHash.toString();
       if (cursor && hash === cursor) return { rows: found, complete: true };
@@ -133,7 +138,7 @@ export async function pullSince(client, account, { cursor = "", stopBeforeMs = n
       if (!cursor && stopBeforeMs !== null && Number.isFinite(at) && at < stopBeforeMs) return { rows: found, complete: true };
       found.push(row);
     }
-    if (rows.length < 100) return { rows: found, complete: !cursor };
+    if (rows.length < 100) return { rows: found, complete: false };
     const next = rows[rows.length - 1].voteStaple.blocksHash.toString();
     if (next === start) return { rows: found, complete: false };
     start = next;
