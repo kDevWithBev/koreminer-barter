@@ -7,14 +7,16 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 
 export const STORAGE_KEY = "koreminer.card.wallet";
 export const WARMING = "Board is warming up, check back after the close";
-export const UNKNOWN = "No counted sends yet for this wallet. Send more than 1 KTA to start a streak.";
+export const UNKNOWN = "No counted sends yet for this wallet. Send 1 KTA or more to start a streak.";
 export const MALFORMED = "That is not a Keeta wallet address.";
 export const NO_LADDER = "No ladder record yet.";
 export const FOOTER = "Streaks and payouts are read from public data. Nothing here is financial advice.";
 export const WHOLE_NOTE = "KORE is counted in whole coins. If a wallet app shows a tiny number, the explorer shows the real count.";
-export const SEND_LEAD = "Send more than 1 KTA from your own wallet to the fire address:";
+export const SEND_LEAD = "Send 1 KTA or more from your own wallet to the fire address:";
 export const SEND_TIP = "Sends from the same wallet in one mine day add up.";
-export const SEND_NOTE = "Sends of 1 KTA or less are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.";
+export const SEND_NOTE = "Sends under 1 KTA are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.";
+// Help under the "Counted today" line. Exactly 1 KTA counts (Trey, 2026-10-26 11:38 ET).
+export const KTA_TODAY_HELP = "Each send must be 1 KTA or more.";
 export const SHOP_EMPTY = "None yet. The shop comes later.";
 
 export function isKeetaAddress(value) {
@@ -282,6 +284,7 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
     kind: row ? "known" : "no-ladder",
     show: shortWallet(entered),
     ktaToday: ktaTodayLine(miner),
+    ktaTodayHelp: KTA_TODAY_HELP,
     shareToday: shareTodayLine(miner),
     carried: carriedLine(miner),
     ladderStreak,
@@ -298,6 +301,7 @@ export function readPlayer({ wallet, lookup, ladder, lookupOk = true }) {
       next: row ? daysLine(daysToNext, nextRank) : "",
       shields: row ? shieldLine(row.shields) : "Shields: no ladder record yet.",
       ktaToday: ktaTodayLine(miner),
+      ktaTodayHelp: KTA_TODAY_HELP,
       shareToday: shareTodayLine(miner),
       carried: carriedLine(miner),
       paid: `${withCommas(paid)} KORE paid`,

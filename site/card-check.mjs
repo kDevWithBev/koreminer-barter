@@ -39,7 +39,7 @@ check("every caption and alt passes the ban list", all.every((t) => !throws(() =
 check("refuse() still blocks a full address everywhere else", throws(() => card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...lookup.miners[W], shopItems: [W] } } }, ladder })));
 const sb = card.sendBlock();
 check("send block: full fire address, copy button, own render path", sb.address === ADDR.sink && card.sendBlockHtml().includes(`<code id="fire-address">${ADDR.sink}</code>`) && card.sendBlockHtml().includes(`data-copy="${ADDR.sink}"`));
-check("send block copy matches §3", sb.lead === "Send more than 1 KTA from your own wallet to the fire address:" && sb.tip === "Sends from the same wallet in one mine day add up." && sb.note.startsWith("Sends of 1 KTA or less are not counted and can't be returned."));
+check("send block copy matches §3", sb.lead === "Send 1 KTA or more from your own wallet to the fire address:" && sb.tip === "Sends from the same wallet in one mine day add up." && sb.note === "Sends under 1 KTA are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.");
 check("send block refuses any other address", throws(() => card.sendBlock(ADDR.intake)));
 let copied = ""; await card.copyFire({ writeText: async (t) => { copied = t; } });
 check("copy button copies the fire address", copied === ADDR.sink);
@@ -53,6 +53,14 @@ const views = publicViews(cfg, pit, { today: "2026-11-03", todaySends: [], testM
 const pv = card.readPlayer({ wallet: W, lookup: views.lookup, ladder: views.ladder });
 check("runner output renders: streak, best rank, waiting, carried", pv.lines.ladder === "Streak 3 (1 shield used)" && pv.lines.rank === "Rank: Shift Boss Shield" && pv.lines.waiting === "342 KORE waiting" && pv.lines.carried === "Part of a KORE carried: 0.42 KORE", JSON.stringify(pv.lines));
 check("aabz6zxb is not on the public board", card.readPlayer({ wallet: ADDR.testB, lookup: views.lookup, ladder: views.ladder }).kind === "unknown" && !card.leaderboard(views.lookup).some((r) => r.wallet.endsWith("bbvy")));
+// Trey 2026-10-26 11:38 ET: exactly 1 KTA counts. Copy says "1 KTA or more" / "under 1 KTA".
+const SRC = readFileSync(new URL("./card.js", import.meta.url), "utf8");
+const BAN = new RegExp(SRC.match(/^const BANNED = \/(.*)\/i;$/m)[1], "i");
+const NEW_COPY = [card.UNKNOWN, card.SEND_LEAD, card.SEND_NOTE, card.KTA_TODAY_HELP];
+check("1 KTA copy is exact", card.UNKNOWN === "No counted sends yet for this wallet. Send 1 KTA or more to start a streak." && card.SEND_LEAD === "Send 1 KTA or more from your own wallet to the fire address:" && card.SEND_NOTE === "Sends under 1 KTA are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either." && card.KTA_TODAY_HELP === "Each send must be 1 KTA or more.");
+check("BANNED passes the new 1 KTA wording", NEW_COPY.every((t) => !BAN.test(t)), NEW_COPY.filter((t) => BAN.test(t)).join(" | "));
+check("old >1 KTA wording is gone from card.js", !/more than 1 KTA|1 KTA or less|at least 1/i.test(SRC));
+check("ktaToday help shows under the counted line", v.lines.ktaTodayHelp === card.KTA_TODAY_HELP && v.text.includes(card.KTA_TODAY_HELP));
 const copy = readFileSync("/workspace/marketing/review-queue/kory-2026-10-26-launch-and-card-copy-v1.md");
 const { createHash } = await import("node:crypto");
 check("copy source is v1 md5 9cb35a96", createHash("md5").update(copy).digest("hex").startsWith("9cb35a96"));

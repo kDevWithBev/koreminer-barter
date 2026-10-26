@@ -211,5 +211,37 @@ check("3c after expiry: voided, fee reservation released, then paid once per wal
   check("6d wrong ladder snapshot md5 refuses to start", threw);
 }
 
+// ---- 7. Tuesday dry run (2026-10-27 UTC) with the package configs (Trey 2026-10-26 11:38 ET: pitDay1 2026-10-29) ----
+{
+  const TUE = "2026-10-27";
+  const tue = () => [
+    staple(`${TUE}T14:00:00.000Z`, [
+      { from: W1, ops: [{ token: BASE, amount: K(1) }] },
+      { from: ADDR.testB, ops: [{ token: ADDR.kore, amount: 1n }, { token: ADDR.usdc, amount: 10_000n }] },
+    ]),
+    staple(`${TUE}T15:00:00.000Z`, [{ from: ADDR.testB, ops: [{ token: BASE, amount: K(1) }] }]),
+  ];
+  const after = () => Date.parse("2026-10-28T00:11:00Z");
+  const a = setup({ test: true, pitDay1: "2026-10-29" });
+  const ca = mockClient({ staples: tue() });
+  await runPit({ dir: a, client: ca, base: BASE, baseText: BASE, koreAccount, accountFrom, now: after, sleep: async () => {}, steps: 1, ...quiet });
+  const pa = stateOf(a, "/pit-test");
+  const sa = JSON.parse(readFileSync(`${a}/pit-test/pit-sends.json`, "utf8"));
+  check("7a test config with pitDay1 10-29: Tuesday closes no day and logs no Tuesday sends", Object.keys(pa.closed).length === 0 && !pa.alloc[TUE] && !(sa.byDay ?? {})[TUE] && ca.published.length === 0);
+  rmSync(a, { recursive: true });
+  const b = setup({ test: true, pitDay1: TUE });
+  const cb = mockClient({ staples: tue() });
+  await runPit({ dir: b, client: cb, base: BASE, baseText: BASE, koreAccount, accountFrom, now: after, sleep: async () => {}, steps: 1, ...quiet });
+  const pb = stateOf(b, "/pit-test");
+  check("7b test config with pitDay1 10-27: Tuesday closes at 00:10Z, exactly 1 KTA counts, burns logged, nothing published", !!pb.closed[TUE] && pb.alloc[TUE].miners[W1] === K(1) && pb.alloc[TUE].miners[ADDR.testB] === K(1) && pb.burns.filter((x) => x.from === ADDR.testB).length === 2 && cb.published.length === 0 && !existsSync(`${b}/pit-state.json`) && !existsSync(`${b}/www/lookup.json`));
+  // Go-live afterwards: replace pit-config.json with the live file. Live state starts fresh in dir; pit-test/ is left alone.
+  writeFileSync(`${b}/pit-config.json`, JSON.stringify({ pitDay1: "2026-10-29", ladderSeed: SNAP, ladderSeedMd5: SNAP_MD5, publicDir: `${b}/www` }));
+  const before = readFileSync(`${b}/pit-test/pit-state.json`, "utf8");
+  await runPit({ dir: b, client: cb, base: BASE, baseText: BASE, koreAccount, accountFrom, now: () => Date.parse("2026-10-28T12:00:00Z"), sleep: async () => {}, steps: 1, ...quiet });
+  const pl = stateOf(b);
+  check("7c switch to live config: fresh live state, no Tuesday carry-over, test state untouched", Object.keys(pl.closed).length === 0 && !pl.alloc[TUE] && Object.keys(pl.pending).length === 0 && readFileSync(`${b}/pit-test/pit-state.json`, "utf8") === before && cb.published.length === 0);
+  rmSync(b, { recursive: true });
+}
+
 console.log(failed ? `PIT_RUN_CHECK_FAIL ${failed}` : "PIT_RUN_CHECK_PASS");
 process.exit(failed ? 1 : 0);
