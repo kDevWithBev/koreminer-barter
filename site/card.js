@@ -16,9 +16,9 @@ export const FOOTER = "Streaks and payouts are read from public data. Nothing he
 export const WHOLE_NOTE = "KORE is counted in whole coins. If a wallet app shows a tiny number, the explorer shows the real count.";
 export const SEND_LEAD = "Send 1 KTA or more from your own wallet to the fire address:";
 export const SEND_TIP = "Sends from the same wallet in one mine day add up.";
-export const SEND_NOTE = "Sends under 1 KTA are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.";
+export const SEND_NOTE = "Sends under 1 KTA aren't counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.";
 // Help under the "Counted today" line. Exactly 1 KTA counts (Trey, 2026-10-26 11:38 ET).
-export const KTA_TODAY_HELP = "Each send must be 1 KTA or more.";
+export const KTA_TODAY_HELP = "Sends under 1 KTA don't count.";
 export const SHOP_EMPTY = "None yet. The shop comes later.";
 // Sage M3: shown under the rank when the streak is below the best rung reached (the rank is kept after a reset).
 export const KEPT_NOTE = "Kept from your best run.";
@@ -106,7 +106,8 @@ export function rankStory(streak, best = null, shields = null) {
   if (days >= 28) {
     return {
       title: "Shift Boss",
-      badge: "Shift Boss Shield",
+      // Sage 2026-10-26: the badge names the shield only while it is held, matching the rank line.
+      badge: shields?.shiftBoss?.held === true ? "Shift Boss Shield" : "Shift Boss",
       portrait: "/cheetah-miner.jpg",
       alt: "A cheetah miner in a helmet, holding a pickaxe",
       // Sage M3: the shield sentence only while a Shift Boss shield is held.

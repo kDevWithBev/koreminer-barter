@@ -1,4 +1,4 @@
-// site/card.js against copy v1 (kory-2026-10-26-launch-and-card-copy-v1.md md5 9cb35a96, §3/§4/§6). Offline.
+// site/card.js against copy v3 (kory-2026-10-26-launch-and-card-copy-v3.md md5 5f6302ac, §3/§4/§6). Offline.
 import { readFileSync } from "node:fs";
 import * as card from "./card.js";
 import { ADDR, createPit, makeConfig } from "../pit.mjs";
@@ -39,7 +39,7 @@ check("every caption and alt passes the ban list", all.every((t) => !throws(() =
 check("refuse() still blocks a full address everywhere else", throws(() => card.readPlayer({ wallet: W, lookup: { miners: { [W]: { ...lookup.miners[W], shopItems: [W] } } }, ladder })));
 const sb = card.sendBlock();
 check("send block: full fire address, copy button, own render path", sb.address === ADDR.sink && card.sendBlockHtml().includes(`<code id="fire-address">${ADDR.sink}</code>`) && card.sendBlockHtml().includes(`data-copy="${ADDR.sink}"`));
-check("send block copy matches §3", sb.lead === "Send 1 KTA or more from your own wallet to the fire address:" && sb.tip === "Sends from the same wallet in one mine day add up." && sb.note === "Sends under 1 KTA are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.");
+check("send block copy matches §3", sb.lead === "Send 1 KTA or more from your own wallet to the fire address:" && sb.tip === "Sends from the same wallet in one mine day add up." && sb.note === "Sends under 1 KTA aren't counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either.");
 check("send block refuses any other address", throws(() => card.sendBlock(ADDR.intake)));
 let copied = ""; await card.copyFire({ writeText: async (t) => { copied = t; } });
 check("copy button copies the fire address", copied === ADDR.sink);
@@ -57,7 +57,7 @@ check("aabz6zxb is not on the public board", card.readPlayer({ wallet: ADDR.test
 const SRC = readFileSync(new URL("./card.js", import.meta.url), "utf8");
 const BAN = new RegExp(SRC.match(/^const BANNED = \/(.*)\/i;$/m)[1], "i");
 const NEW_COPY = [card.UNKNOWN, card.SEND_LEAD, card.SEND_NOTE, card.KTA_TODAY_HELP];
-check("1 KTA copy is exact", card.UNKNOWN === "No counted sends yet for this wallet. Send 1 KTA or more to start a streak." && card.SEND_LEAD === "Send 1 KTA or more from your own wallet to the fire address:" && card.SEND_NOTE === "Sends under 1 KTA are not counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either." && card.KTA_TODAY_HELP === "Each send must be 1 KTA or more.");
+check("1 KTA copy is exact", card.UNKNOWN === "No counted sends yet for this wallet. Send 1 KTA or more to start a streak." && card.SEND_LEAD === "Send 1 KTA or more from your own wallet to the fire address:" && card.SEND_NOTE === "Sends under 1 KTA aren't counted and can't be returned. KORE, other tokens and sends to any other address aren't counted or returned either." && card.KTA_TODAY_HELP === "Sends under 1 KTA don't count.");
 check("BANNED passes the new 1 KTA wording", NEW_COPY.every((t) => !BAN.test(t)), NEW_COPY.filter((t) => BAN.test(t)).join(" | "));
 check("old >1 KTA wording is gone from card.js", !/more than 1 KTA|1 KTA or less|at least 1/i.test(SRC));
 check("ktaToday help shows under the counted line", v.lines.ktaTodayHelp === card.KTA_TODAY_HELP && v.text.includes(card.KTA_TODAY_HELP));
@@ -84,8 +84,20 @@ const atBest = card.readPlayer({ wallet: W, lookup: views.lookup, ladder: { wall
 check("M3 card: no 'Kept' line when the streak is at or above the best rung", atBest.lines.kept === "" && !atBest.text.includes(card.KEPT_NOTE));
 check("M3 rankLabel strips only a trailing 'Shield'", card.rankLabel("Shift Boss Shield") === "Shift Boss" && card.rankLabel("Practice Shield") === "Practice" && card.rankLabel("Narrator Book") === "Narrator Book" && card.rankLabel("Barterer") === "Barterer");
 check("M3 Shift Boss caption mentions the shield only while one is held", card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: true } }).caption === "Twenty-eight days down. The shield covers one missed day." && card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: false, used: true } }).caption === "Twenty-eight days down." && card.rankStory(30).caption === "Twenty-eight days down.");
-const copy = readFileSync("/workspace/marketing/review-queue/kory-2026-10-26-launch-and-card-copy-v1.md");
+// ---- Sage 2026-10-26 (a): the Shift Boss badge says "Shield" only while that shield is held ----
+const badgeHeld = card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: true } }).badge;
+const badgeUsed = card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: false, used: true } }).badge;
+const badgeNone = card.rankStory(30).badge;
+const badgeTruthy = card.rankStory(30, null, { shiftBoss: { held: "yes" } }).badge;
+check("badge: 'Shift Boss Shield' only when held === true, else 'Shift Boss'", badgeHeld === "Shift Boss Shield" && badgeUsed === "Shift Boss" && badgeNone === "Shift Boss" && badgeTruthy === "Shift Boss", JSON.stringify([badgeHeld, badgeUsed, badgeNone, badgeTruthy]));
+check("badge matches the rank line when the shield is not held", badgeUsed === card.rankLabel("Shift Boss Shield"));
+// ---- Copy pin: v3 (5f6302ac). Every card.js copy line checked above must appear verbatim in v3. ----
+const copyText = readFileSync("/workspace/marketing/review-queue/kory-2026-10-26-launch-and-card-copy-v3.md", "utf8");
 const { createHash } = await import("node:crypto");
-check("copy source is v1 md5 9cb35a96", createHash("md5").update(copy).digest("hex").startsWith("9cb35a96"));
+check("copy source is v3 md5 5f6302ac", createHash("md5").update(copyText).digest("hex").startsWith("5f6302ac"));
+const PINNED = [card.UNKNOWN, card.SEND_LEAD, card.SEND_TIP, card.SEND_NOTE, card.KTA_TODAY_HELP, card.WHOLE_NOTE, card.WARMING, card.MALFORMED, card.NO_LADDER, card.FOOTER, card.SHOP_EMPTY,
+  card.rankStory(0).caption, card.rankStory(84).caption, card.rankStory(56).caption, card.rankStory(0, "Shift Boss Shield", { shiftBoss: { held: true } }).caption];
+const notInCopy = PINNED.filter((t) => !copyText.includes(t));
+check("card.js copy lines appear verbatim in copy v3", notInCopy.length === 0, notInCopy.join(" | "));
 console.log(failed ? `CARD_CHECK_FAIL ${failed}` : "CARD_CHECK_PASS");
 process.exit(failed ? 1 : 0);
